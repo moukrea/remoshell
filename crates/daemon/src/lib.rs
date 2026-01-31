@@ -104,12 +104,48 @@ pub use router::{MessageRouter, RouterError, RouterResult};
 
 // Re-export UI types for convenience
 pub use ui::{
-    device_id_to_hex, generate_minimal_unit_file, generate_png_qr, generate_terminal_qr,
-    generate_unit_file, is_systemd, notify_mainpid, notify_ready, notify_status, notify_stopping,
-    notify_watchdog, process_approval_result, ApprovalAction, ApprovalInfo, ApprovalResult,
-    DaemonStats, DeviceInfo, PairingInfo, SessionInfo, SignalHandler, SystemdContext, Tab, TuiApp,
-    TuiEvent, DEFAULT_EXPIRY_SECONDS,
+    device_id_to_hex, generate_png_qr, generate_terminal_qr, process_approval_result,
+    ApprovalAction, ApprovalInfo, ApprovalResult, DaemonStats, DeviceInfo, PairingInfo,
+    SessionInfo, Tab, TuiApp, TuiEvent, DEFAULT_EXPIRY_SECONDS,
 };
+
+// Re-export systemd types (Linux only, with stubs for other platforms)
+#[cfg(target_os = "linux")]
+pub use ui::{
+    generate_minimal_unit_file, generate_unit_file, is_systemd, notify_mainpid, notify_ready,
+    notify_status, notify_stopping, notify_watchdog, SignalHandler, SystemdContext,
+};
+
+// Stub implementations for non-Linux platforms
+#[cfg(not(target_os = "linux"))]
+pub fn is_systemd() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn notify_ready() {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn notify_stopping() {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn notify_status(_message: &str) {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn notify_mainpid(_pid: u32) {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn notify_watchdog() {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn generate_unit_file(_exec_path: Option<&str>) -> String {
+    String::from("# systemd unit files are only supported on Linux")
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn generate_minimal_unit_file(_exec_path: Option<&str>) -> String {
+    String::from("# systemd unit files are only supported on Linux")
+}
 
 // Re-export orchestrator types for convenience
 pub use orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};

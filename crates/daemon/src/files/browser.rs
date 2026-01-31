@@ -4,12 +4,24 @@
 //! all paths against allowed boundaries and prevents path traversal attacks.
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use protocol::messages::{FileEntry, FileEntryType};
 use thiserror::Error;
+
+/// Get the Unix mode of a file. Returns 0 on non-Unix platforms.
+#[cfg(unix)]
+fn get_mode(metadata: &std::fs::Metadata) -> u32 {
+    metadata.mode()
+}
+
+#[cfg(not(unix))]
+fn get_mode(_metadata: &std::fs::Metadata) -> u32 {
+    0
+}
 
 /// Errors that can occur during directory browsing.
 #[derive(Debug, Error)]
@@ -327,7 +339,7 @@ impl DirectoryBrowser {
                 path: entry.path(),
                 entry_type,
                 size,
-                mode: metadata.mode(),
+                mode: get_mode(&metadata),
                 modified,
                 is_symlink,
                 symlink_target,
@@ -391,7 +403,7 @@ impl DirectoryBrowser {
             path: canonical,
             entry_type,
             size,
-            mode: metadata.mode(),
+            mode: get_mode(&metadata),
             modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
             is_symlink,
             symlink_target,
@@ -399,7 +411,7 @@ impl DirectoryBrowser {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;

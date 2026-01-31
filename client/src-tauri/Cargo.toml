@@ -1,5 +1,3 @@
-[workspace]
-
 [package]
 name = "remoshell-app"
 version = "0.1.0"

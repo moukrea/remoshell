@@ -5,6 +5,7 @@
 //! generation for device pairing, and systemd integration.
 
 pub mod qr;
+#[cfg(target_os = "linux")]
 pub mod systemd;
 pub mod tui;
 
@@ -17,7 +18,8 @@ pub use tui::{
 // Re-export QR types for convenience
 pub use qr::{generate_png_qr, generate_terminal_qr, PairingInfo, DEFAULT_EXPIRY_SECONDS};
 
-// Re-export systemd types for convenience
+// Re-export systemd types for convenience (Linux only)
+#[cfg(target_os = "linux")]
 pub use systemd::{
     generate_minimal_unit_file, generate_unit_file, is_systemd, notify_mainpid, notify_ready,
     notify_status, notify_stopping, notify_watchdog, SignalHandler, SystemdContext,
