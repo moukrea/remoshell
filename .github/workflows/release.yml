@@ -215,7 +215,7 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
 
       - name: Sign APK (if secrets available)
-        if: env.ANDROID_SIGNING_KEY != ''
+        if: ${{ secrets.ANDROID_SIGNING_KEY != '' }}
         uses: r0adkll/sign-android-release@v1
         with:
           releaseDirectory: client/src-tauri/gen/android/app/build/outputs/apk/universal/release
