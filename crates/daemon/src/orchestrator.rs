@@ -380,7 +380,7 @@ impl DaemonOrchestrator {
             .network
             .stun_servers
             .iter()
-            .map(|url| crate::network::webrtc::IceServer::stun(url))
+            .map(crate::network::webrtc::IceServer::stun)
             .collect();
         let webrtc_config = WebRtcConfig::with_ice_servers(ice_servers);
 
@@ -481,7 +481,7 @@ impl DaemonOrchestrator {
             let candidate_init = webrtc::ice_transport::ice_candidate::RTCIceCandidateInit {
                 candidate,
                 sdp_mid,
-                sdp_mline_index: sdp_mline_index.map(|i| i as u16),
+                sdp_mline_index,
                 ..Default::default()
             };
 

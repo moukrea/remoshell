@@ -80,20 +80,11 @@ impl QuicConfig {
 }
 
 /// Internal state for managing bi-directional streams per channel type.
+#[derive(Default)]
 struct StreamChannels {
     control: Option<StreamPair>,
     terminal: Option<StreamPair>,
     files: Option<StreamPair>,
-}
-
-impl Default for StreamChannels {
-    fn default() -> Self {
-        Self {
-            control: None,
-            terminal: None,
-            files: None,
-        }
-    }
 }
 
 impl StreamChannels {
@@ -722,7 +713,7 @@ impl ConnectionTrait for QuicConnectionHandler {
 
     fn peer_public_key(&self) -> Option<[u8; 32]> {
         // iroh uses 32-byte public keys (same as X25519)
-        self.peer_node_id().map(|id| id.as_bytes().clone())
+        self.peer_node_id().map(|id| *id.as_bytes())
     }
 }
 

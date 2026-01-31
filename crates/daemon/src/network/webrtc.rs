@@ -82,7 +82,7 @@ impl From<IceServer> for RTCIceServer {
             urls: server.urls,
             username: server.username.unwrap_or_default(),
             credential: server.credential.unwrap_or_default(),
-            ..Default::default()
+            credential_type: Default::default(),
         }
     }
 }
@@ -127,20 +127,11 @@ impl WebRtcConfig {
 }
 
 /// Internal state for data channels.
+#[derive(Default)]
 struct DataChannels {
     control: Option<Arc<RTCDataChannel>>,
     terminal: Option<Arc<RTCDataChannel>>,
     files: Option<Arc<RTCDataChannel>>,
-}
-
-impl Default for DataChannels {
-    fn default() -> Self {
-        Self {
-            control: None,
-            terminal: None,
-            files: None,
-        }
-    }
 }
 
 impl DataChannels {

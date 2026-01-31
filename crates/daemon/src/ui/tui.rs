@@ -642,6 +642,7 @@ impl TuiApp {
     }
 
     /// Renders the entire frame.
+    #[allow(clippy::too_many_arguments)]
     fn render_frame(
         frame: &mut Frame,
         current_tab: Tab,
