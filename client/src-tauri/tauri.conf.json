@@ -41,7 +41,7 @@
         "bundleMediaFramework": true
       }
     },
-    "macOS": {
+    "macos": {
       "minimumSystemVersion": "10.15"
     },
     "windows": {
@@ -52,7 +52,7 @@
     "android": {
       "minSdkVersion": 24
     },
-    "iOS": {
+    "ios": {
       "developmentTeam": ""
     }
   },
