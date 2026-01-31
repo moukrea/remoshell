@@ -210,7 +210,7 @@ jobs:
 
       - name: Build Android APK
         working-directory: client
-        run: npm run tauri android build -- --apk
+        run: npm run tauri android build
         env:
           NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
 
