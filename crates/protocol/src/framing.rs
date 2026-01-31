@@ -411,7 +411,11 @@ mod tests {
         let encoded = codec.encode(&original).unwrap();
 
         // Verify compression was NOT applied
-        assert_eq!(encoded[8] & 0x01, 0x00, "compression flag should not be set");
+        assert_eq!(
+            encoded[8] & 0x01,
+            0x00,
+            "compression flag should not be set"
+        );
 
         let (decoded, _) = codec.decode(&encoded).unwrap();
         assert_eq!(decoded.payload, original.payload);
@@ -595,10 +599,7 @@ mod tests {
 
         let result = codec.decode(&bad_frame);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("decompress"));
+        assert!(result.unwrap_err().to_string().contains("decompress"));
     }
 
     #[test]
@@ -629,9 +630,7 @@ mod tests {
         let codec = FrameCodec::new();
 
         // Random-ish data that doesn't compress well
-        let payload: Vec<u8> = (0..2048)
-            .map(|i| ((i * 17 + 31) % 256) as u8)
-            .collect();
+        let payload: Vec<u8> = (0..2048).map(|i| ((i * 17 + 31) % 256) as u8).collect();
         let original = Frame::new(payload.clone());
 
         let encoded = codec.encode(&original).unwrap();

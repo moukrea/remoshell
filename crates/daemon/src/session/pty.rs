@@ -471,7 +471,11 @@ mod tests {
         let result = Session::spawn(Some("/bin/sh".to_string()), 80, 24, vec![], None);
 
         // The session should spawn successfully
-        assert!(result.is_ok(), "Failed to spawn session: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to spawn session: {:?}",
+            result.err()
+        );
 
         let (session, _rx) = result.unwrap();
         assert!(session.is_running());
@@ -608,7 +612,10 @@ mod tests {
             }
         }
 
-        assert!(found_value, "Did not receive expected environment variable value");
+        assert!(
+            found_value,
+            "Did not receive expected environment variable value"
+        );
 
         // Clean up
         let _ = session.kill(Some(9)).await;

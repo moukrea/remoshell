@@ -145,9 +145,9 @@ impl DirectoryBrowser {
         if path_str.contains("..") {
             // Double-check by normalizing - legitimate paths with ".." in names
             // will still work after canonicalization
-            let has_traversal = path.components().any(|c| {
-                matches!(c, std::path::Component::ParentDir)
-            });
+            let has_traversal = path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
             if has_traversal && !path.is_absolute() {
                 // Only reject if it's trying to go up from a relative path
                 // Absolute paths with .. will be caught by canonicalize
@@ -212,9 +212,7 @@ impl DirectoryBrowser {
             ));
         }
         if file_name_str == ".." || file_name_str == "." {
-            return Err(BrowserError::PathTraversal(
-                "invalid file name".to_string(),
-            ));
+            return Err(BrowserError::PathTraversal("invalid file name".to_string()));
         }
 
         Ok(parent_canonical.join(file_name))
@@ -238,7 +236,9 @@ impl DirectoryBrowser {
         // Canonicalize and validate the target
         match self.validate_path(&absolute_target) {
             Ok(canonical) => Ok(canonical),
-            Err(_) => Err(BrowserError::SymlinkOutsideBoundary(link_path.to_path_buf())),
+            Err(_) => Err(BrowserError::SymlinkOutsideBoundary(
+                link_path.to_path_buf(),
+            )),
         }
     }
 
@@ -568,7 +568,8 @@ mod tests {
         let browser = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
 
         // Valid new file path
-        let result = browser.validate_path_for_creation(&temp_dir.path().join("subdir/new_file.txt"));
+        let result =
+            browser.validate_path_for_creation(&temp_dir.path().join("subdir/new_file.txt"));
         assert!(result.is_ok());
 
         // Invalid path outside boundary
@@ -610,7 +611,9 @@ mod tests {
         fs::write(temp_dir.path().join("file.txt"), "Hello World").unwrap();
 
         let browser = DirectoryBrowser::allow_all();
-        let entry = browser.get_entry(&temp_dir.path().join("file.txt")).unwrap();
+        let entry = browser
+            .get_entry(&temp_dir.path().join("file.txt"))
+            .unwrap();
 
         assert_eq!(entry.name, "file.txt");
         assert!(matches!(entry.entry_type, FileEntryType::File));
@@ -664,8 +667,12 @@ mod tests {
         ]);
 
         // Both paths should be allowed
-        assert!(browser.validate_path(&temp_dir1.path().join("file1.txt")).is_ok());
-        assert!(browser.validate_path(&temp_dir2.path().join("file2.txt")).is_ok());
+        assert!(browser
+            .validate_path(&temp_dir1.path().join("file1.txt"))
+            .is_ok());
+        assert!(browser
+            .validate_path(&temp_dir2.path().join("file2.txt"))
+            .is_ok());
     }
 
     #[test]

@@ -165,7 +165,10 @@ impl TrustStore {
     /// If the file exists but is invalid, returns an error.
     pub fn load(&self) -> Result<()> {
         if !self.path.exists() {
-            tracing::debug!("Trust store file not found at {:?}, starting empty", self.path);
+            tracing::debug!(
+                "Trust store file not found at {:?}, starting empty",
+                self.path
+            );
             return Ok(());
         }
 
@@ -175,16 +178,21 @@ impl TrustStore {
         let data: TrustStoreData = serde_json::from_str(&contents)
             .with_context(|| format!("Failed to parse trust store: {}", self.path.display()))?;
 
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on trust store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on trust store"))?;
 
         devices.clear();
         for device in data.devices {
             devices.insert(device.device_id, device);
         }
 
-        tracing::info!("Loaded {} trusted devices from {:?}", devices.len(), self.path);
+        tracing::info!(
+            "Loaded {} trusted devices from {:?}",
+            devices.len(),
+            self.path
+        );
         Ok(())
     }
 
@@ -196,21 +204,25 @@ impl TrustStore {
         // Ensure parent directory exists
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create trust store directory: {}", parent.display())
+                format!(
+                    "Failed to create trust store directory: {}",
+                    parent.display()
+                )
             })?;
         }
 
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on trust store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on trust store"))?;
 
         let data = TrustStoreData {
             version: 1,
             devices: devices.values().cloned().collect(),
         };
 
-        let contents = serde_json::to_string_pretty(&data)
-            .context("Failed to serialize trust store")?;
+        let contents =
+            serde_json::to_string_pretty(&data).context("Failed to serialize trust store")?;
 
         // Atomic write: write to temp file, then rename
         let temp_path = self.path.with_extension("json.tmp");
@@ -235,9 +247,10 @@ impl TrustStore {
     /// If the device already exists, it will be updated.
     /// Does not automatically save; call `save()` after making changes.
     pub fn add_device(&self, device: TrustedDevice) -> Result<()> {
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on trust store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on trust store"))?;
 
         tracing::info!(
             "Adding device {} ({}) with trust level {:?}",
@@ -255,9 +268,10 @@ impl TrustStore {
     /// Returns the removed device if it existed.
     /// Does not automatically save; call `save()` after making changes.
     pub fn remove_device(&self, device_id: &DeviceId) -> Result<Option<TrustedDevice>> {
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on trust store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on trust store"))?;
 
         let removed = devices.remove(device_id);
         if let Some(ref device) = removed {
@@ -271,9 +285,10 @@ impl TrustStore {
     /// Returns `true` only if the device exists and has `TrustLevel::Trusted`.
     /// Revoked and unknown devices return `false`.
     pub fn is_trusted(&self, device_id: &DeviceId) -> Result<bool> {
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on trust store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on trust store"))?;
 
         Ok(devices
             .get(device_id)
@@ -285,9 +300,10 @@ impl TrustStore {
     ///
     /// Returns `None` if the device is not in the store.
     pub fn get_device(&self, device_id: &DeviceId) -> Result<Option<TrustedDevice>> {
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on trust store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on trust store"))?;
 
         Ok(devices.get(device_id).cloned())
     }
@@ -296,9 +312,10 @@ impl TrustStore {
     ///
     /// Returns an error if the device doesn't exist.
     pub fn set_trust_level(&self, device_id: &DeviceId, level: TrustLevel) -> Result<()> {
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on trust store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on trust store"))?;
 
         let device = devices
             .get_mut(device_id)
@@ -320,9 +337,10 @@ impl TrustStore {
     ///
     /// Returns an error if the device doesn't exist.
     pub fn update_last_seen(&self, device_id: &DeviceId) -> Result<()> {
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on trust store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on trust store"))?;
 
         let device = devices
             .get_mut(device_id)
@@ -334,18 +352,20 @@ impl TrustStore {
 
     /// Lists all devices in the store.
     pub fn list_devices(&self) -> Result<Vec<TrustedDevice>> {
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on trust store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on trust store"))?;
 
         Ok(devices.values().cloned().collect())
     }
 
     /// Returns the number of devices in the store.
     pub fn len(&self) -> Result<usize> {
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on trust store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on trust store"))?;
         Ok(devices.len())
     }
 
@@ -534,15 +554,21 @@ mod tests {
         assert!(store.is_trusted(&device_id).unwrap());
 
         // Change to Revoked
-        store.set_trust_level(&device_id, TrustLevel::Revoked).unwrap();
+        store
+            .set_trust_level(&device_id, TrustLevel::Revoked)
+            .unwrap();
         assert!(!store.is_trusted(&device_id).unwrap());
 
         // Change to Unknown
-        store.set_trust_level(&device_id, TrustLevel::Unknown).unwrap();
+        store
+            .set_trust_level(&device_id, TrustLevel::Unknown)
+            .unwrap();
         assert!(!store.is_trusted(&device_id).unwrap());
 
         // Change back to Trusted
-        store.set_trust_level(&device_id, TrustLevel::Trusted).unwrap();
+        store
+            .set_trust_level(&device_id, TrustLevel::Trusted)
+            .unwrap();
         assert!(store.is_trusted(&device_id).unwrap());
     }
 
@@ -554,7 +580,9 @@ mod tests {
         let device_id = device.device_id;
 
         store.add_device(device).unwrap();
-        store.set_trust_level(&device_id, TrustLevel::Revoked).unwrap();
+        store
+            .set_trust_level(&device_id, TrustLevel::Revoked)
+            .unwrap();
 
         // Revoked device should not be trusted
         assert!(!store.is_trusted(&device_id).unwrap());
@@ -646,7 +674,11 @@ mod tests {
     #[test]
     fn test_trust_store_creates_parent_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("nested").join("dirs").join("trusted_devices.json");
+        let path = temp_dir
+            .path()
+            .join("nested")
+            .join("dirs")
+            .join("trusted_devices.json");
 
         let store = TrustStore::new(&path);
         let device = create_test_device("Nested Test");

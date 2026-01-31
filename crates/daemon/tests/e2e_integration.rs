@@ -11,13 +11,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use daemon::config::Config;
-use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
-use daemon::session::{SessionManager, SessionManagerImpl};
-use daemon::files::{DirectoryBrowser, FileTransfer};
 use daemon::devices::TrustStore;
+use daemon::files::{DirectoryBrowser, FileTransfer};
+use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
 use daemon::router::MessageRouter;
+use daemon::session::{SessionManager, SessionManagerImpl};
 use protocol::messages::{
-    Message, SessionCreate, SessionData, DataStream, FileListRequest, Ping, DeviceApprovalRequest,
+    DataStream, DeviceApprovalRequest, FileListRequest, Message, Ping, SessionCreate, SessionData,
 };
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -224,7 +224,11 @@ impl SessionManager for MockSessionManager {
         Ok(())
     }
 
-    async fn write(&self, _session_id: &String, _data: &[u8]) -> Result<(), daemon::session::SessionError> {
+    async fn write(
+        &self,
+        _session_id: &String,
+        _data: &[u8],
+    ) -> Result<(), daemon::session::SessionError> {
         Ok(())
     }
 
@@ -381,7 +385,9 @@ async fn test_trust_store_revoke() {
     assert!(store.is_trusted(&device_id).unwrap());
 
     // Revoke the device
-    store.set_trust_level(&device_id, daemon::devices::TrustLevel::Revoked).unwrap();
+    store
+        .set_trust_level(&device_id, daemon::devices::TrustLevel::Revoked)
+        .unwrap();
     assert!(!store.is_trusted(&device_id).unwrap());
 }
 
@@ -424,8 +430,8 @@ async fn test_file_download_chunk() {
     std::fs::write(temp_dir.path().join("download_test.txt"), content).unwrap();
 
     let browser = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
-    let transfer = FileTransfer::new(browser, 100 * 1024 * 1024)
-        .with_temp_dir(temp_dir.path().join("tmp"));
+    let transfer =
+        FileTransfer::new(browser, 100 * 1024 * 1024).with_temp_dir(temp_dir.path().join("tmp"));
 
     let path = temp_dir.path().join("download_test.txt");
     let (data, total_size, is_last) = transfer.download_chunk(&path, 0, 1024).unwrap();
@@ -442,14 +448,16 @@ async fn test_file_upload_flow() {
     std::fs::create_dir_all(&upload_dir).unwrap();
 
     let browser = DirectoryBrowser::new(vec![upload_dir.clone()]);
-    let transfer = FileTransfer::new(browser, 100 * 1024 * 1024)
-        .with_temp_dir(temp_dir.path().join("tmp"));
+    let transfer =
+        FileTransfer::new(browser, 100 * 1024 * 1024).with_temp_dir(temp_dir.path().join("tmp"));
 
     let dest_path = upload_dir.join("uploaded.txt");
     let content = b"Uploaded content!";
 
     // Start upload
-    transfer.start_upload(&dest_path, content.len() as u64, 0o644, false).unwrap();
+    transfer
+        .start_upload(&dest_path, content.len() as u64, 0o644, false)
+        .unwrap();
 
     // Write chunk
     transfer.write_chunk(&dest_path, 0, content).unwrap();

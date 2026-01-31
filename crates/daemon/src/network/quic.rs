@@ -13,9 +13,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iroh::endpoint::Connection;
-use iroh::{Endpoint, NodeAddr, NodeId, RelayUrl, SecretKey};
 #[cfg(test)]
 use iroh::RelayMode;
+use iroh::{Endpoint, NodeAddr, NodeId, RelayUrl, SecretKey};
 use protocol::error::{ProtocolError, Result};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
@@ -163,8 +163,7 @@ impl QuicConnectionHandler {
     ///
     /// This sets up the iroh endpoint and prepares for connections.
     pub async fn new(config: QuicConfig) -> Result<Self> {
-        let builder = Endpoint::builder()
-            .alpns(vec![REMOSHELL_ALPN.to_vec()]);
+        let builder = Endpoint::builder().alpns(vec![REMOSHELL_ALPN.to_vec()]);
 
         // Configure relay if provided
         if let Some(ref relay_url) = config.relay_url {
@@ -180,7 +179,11 @@ impl QuicConnectionHandler {
         let mut message_rx = HashMap::new();
         let mut message_tx = HashMap::new();
 
-        for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+        for channel_type in [
+            ChannelType::Control,
+            ChannelType::Terminal,
+            ChannelType::Files,
+        ] {
             let (tx, rx) = mpsc::channel(CHANNEL_BUFFER_SIZE);
             message_tx.insert(channel_type, tx);
             message_rx.insert(channel_type, rx);
@@ -217,7 +220,11 @@ impl QuicConnectionHandler {
         let mut message_rx = HashMap::new();
         let mut message_tx = HashMap::new();
 
-        for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+        for channel_type in [
+            ChannelType::Control,
+            ChannelType::Terminal,
+            ChannelType::Files,
+        ] {
             let (tx, rx) = mpsc::channel(CHANNEL_BUFFER_SIZE);
             message_tx.insert(channel_type, tx);
             message_rx.insert(channel_type, rx);
@@ -258,9 +265,11 @@ impl QuicConnectionHandler {
     ///
     /// This method blocks until a connection is received or the endpoint is closed.
     pub async fn accept(&self) -> Result<()> {
-        let incoming = self.endpoint.accept().await.ok_or_else(|| {
-            ProtocolError::ConnectionClosed("endpoint closed".into())
-        })?;
+        let incoming = self
+            .endpoint
+            .accept()
+            .await
+            .ok_or_else(|| ProtocolError::ConnectionClosed("endpoint closed".into()))?;
 
         let connection = incoming.await.map_err(|e| {
             ProtocolError::HandshakeFailed(format!("failed to accept connection: {}", e))
@@ -303,9 +312,7 @@ impl QuicConnectionHandler {
         )
         .await
         .map_err(|_| ProtocolError::Timeout("connection timed out".into()))?
-        .map_err(|e| {
-            ProtocolError::HandshakeFailed(format!("failed to connect: {}", e))
-        })?;
+        .map_err(|e| ProtocolError::HandshakeFailed(format!("failed to connect: {}", e)))?;
 
         // Store the peer's node ID
         {
@@ -334,13 +341,17 @@ impl QuicConnectionHandler {
     /// This should be called by the connection initiator after connecting.
     pub async fn create_streams(&self) -> Result<()> {
         let conn = self.connection.read().await;
-        let connection = conn.as_ref().ok_or_else(|| {
-            ProtocolError::ConnectionClosed("no active connection".into())
-        })?;
+        let connection = conn
+            .as_ref()
+            .ok_or_else(|| ProtocolError::ConnectionClosed("no active connection".into()))?;
 
         let mut streams = self.streams.lock().await;
 
-        for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+        for channel_type in [
+            ChannelType::Control,
+            ChannelType::Terminal,
+            ChannelType::Files,
+        ] {
             let (send, recv) = connection.open_bi().await.map_err(|e| {
                 ProtocolError::HandshakeFailed(format!(
                     "failed to open {:?} stream: {}",
@@ -371,23 +382,21 @@ impl QuicConnectionHandler {
     /// This should be called by the connection acceptor after accepting.
     pub async fn accept_streams(&self) -> Result<()> {
         let conn = self.connection.read().await;
-        let connection = conn.as_ref().ok_or_else(|| {
-            ProtocolError::ConnectionClosed("no active connection".into())
-        })?;
+        let connection = conn
+            .as_ref()
+            .ok_or_else(|| ProtocolError::ConnectionClosed("no active connection".into()))?;
 
         let mut streams = self.streams.lock().await;
         let mut accepted_count = 0;
 
         while accepted_count < 3 {
-            let (send, mut recv) = tokio::time::timeout(
-                self.config.stream_timeout,
-                connection.accept_bi(),
-            )
-            .await
-            .map_err(|_| ProtocolError::Timeout("stream acceptance timed out".into()))?
-            .map_err(|e| {
-                ProtocolError::HandshakeFailed(format!("failed to accept stream: {}", e))
-            })?;
+            let (send, mut recv) =
+                tokio::time::timeout(self.config.stream_timeout, connection.accept_bi())
+                    .await
+                    .map_err(|_| ProtocolError::Timeout("stream acceptance timed out".into()))?
+                    .map_err(|e| {
+                        ProtocolError::HandshakeFailed(format!("failed to accept stream: {}", e))
+                    })?;
 
             // Read channel type identifier
             let mut channel_id = [0u8; 1];
@@ -424,7 +433,11 @@ impl QuicConnectionHandler {
         let message_tx = self.message_tx.clone();
         let connected = self.connected.clone();
 
-        for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+        for channel_type in [
+            ChannelType::Control,
+            ChannelType::Terminal,
+            ChannelType::Files,
+        ] {
             let streams = streams.clone();
             let message_tx = message_tx.clone();
             let connected = connected.clone();
@@ -452,11 +465,7 @@ impl QuicConnectionHandler {
                             }
                         }
                         Err(e) => {
-                            tracing::debug!(
-                                "{:?} stream closed or error: {}",
-                                channel_type,
-                                e
-                            );
+                            tracing::debug!("{:?} stream closed or error: {}", channel_type, e);
                             let mut conn = connected.write().await;
                             *conn = false;
                             break;
@@ -479,9 +488,11 @@ impl QuicConnectionHandler {
 
         // Read 4-byte length prefix
         let mut len_buf = [0u8; 4];
-        stream_pair.recv.read_exact(&mut len_buf).await.map_err(|e| {
-            ProtocolError::ConnectionClosed(format!("stream read error: {}", e))
-        })?;
+        stream_pair
+            .recv
+            .read_exact(&mut len_buf)
+            .await
+            .map_err(|e| ProtocolError::ConnectionClosed(format!("stream read error: {}", e)))?;
 
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > MAX_MESSAGE_SIZE {
@@ -493,9 +504,11 @@ impl QuicConnectionHandler {
 
         // Read the message data
         let mut data = vec![0u8; len];
-        stream_pair.recv.read_exact(&mut data).await.map_err(|e| {
-            ProtocolError::ConnectionClosed(format!("stream read error: {}", e))
-        })?;
+        stream_pair
+            .recv
+            .read_exact(&mut data)
+            .await
+            .map_err(|e| ProtocolError::ConnectionClosed(format!("stream read error: {}", e)))?;
 
         Ok(data)
     }
@@ -520,14 +533,18 @@ impl QuicConnectionHandler {
 
         // Write 4-byte length prefix
         let len = data.len() as u32;
-        stream_pair.send.write_all(&len.to_be_bytes()).await.map_err(|e| {
-            ProtocolError::TransferFailed(format!("stream write error: {}", e))
-        })?;
+        stream_pair
+            .send
+            .write_all(&len.to_be_bytes())
+            .await
+            .map_err(|e| ProtocolError::TransferFailed(format!("stream write error: {}", e)))?;
 
         // Write the message data
-        stream_pair.send.write_all(data).await.map_err(|e| {
-            ProtocolError::TransferFailed(format!("stream write error: {}", e))
-        })?;
+        stream_pair
+            .send
+            .write_all(data)
+            .await
+            .map_err(|e| ProtocolError::TransferFailed(format!("stream write error: {}", e)))?;
 
         Ok(())
     }
@@ -544,9 +561,9 @@ impl QuicConnectionHandler {
             ProtocolError::ConnectionClosed(format!("{:?} channel not available", channel_type))
         })?;
 
-        rx.recv().await.ok_or_else(|| {
-            ProtocolError::ConnectionClosed("channel closed".into())
-        })
+        rx.recv()
+            .await
+            .ok_or_else(|| ProtocolError::ConnectionClosed("channel closed".into()))
     }
 
     /// Closes the connection gracefully.
@@ -587,7 +604,11 @@ impl QuicConnectionHandler {
             let mut message_rx = self.message_rx.lock().await;
             let mut message_tx = self.message_tx.write().await;
 
-            for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+            for channel_type in [
+                ChannelType::Control,
+                ChannelType::Terminal,
+                ChannelType::Files,
+            ] {
                 let (tx, rx) = mpsc::channel(CHANNEL_BUFFER_SIZE);
                 message_tx.insert(channel_type, tx);
                 message_rx.insert(channel_type, rx);
@@ -636,7 +657,11 @@ impl QuicConnectionHandler {
         let mut message_rx = HashMap::new();
         let mut message_tx = HashMap::new();
 
-        for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+        for channel_type in [
+            ChannelType::Control,
+            ChannelType::Terminal,
+            ChannelType::Files,
+        ] {
             let (tx, rx) = mpsc::channel(CHANNEL_BUFFER_SIZE);
             message_tx.insert(channel_type, tx);
             message_rx.insert(channel_type, rx);
@@ -668,9 +693,7 @@ impl ConnectionTrait for QuicConnectionHandler {
         channel: ChannelType,
         data: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            Self::write_to_stream(&self.streams, channel, data).await
-        })
+        Box::pin(async move { Self::write_to_stream(&self.streams, channel, data).await })
     }
 
     fn recv<'a>(
@@ -683,9 +706,9 @@ impl ConnectionTrait for QuicConnectionHandler {
                 ProtocolError::ConnectionClosed(format!("{:?} channel not available", channel))
             })?;
 
-            rx.recv().await.ok_or_else(|| {
-                ProtocolError::ConnectionClosed("channel closed".into())
-            })
+            rx.recv()
+                .await
+                .ok_or_else(|| ProtocolError::ConnectionClosed("channel closed".into()))
         })
     }
 
@@ -738,7 +761,9 @@ mod tests {
         let expected_node_id = secret_key.public();
 
         let config = QuicConfig::default();
-        let handler = QuicConnectionHandler::with_secret_key(config, secret_key).await.unwrap();
+        let handler = QuicConnectionHandler::with_secret_key(config, secret_key)
+            .await
+            .unwrap();
 
         assert_eq!(handler.node_id(), expected_node_id);
     }
@@ -775,8 +800,12 @@ mod tests {
     #[ignore = "requires network connectivity, run with --ignored"]
     async fn test_full_connection() {
         // Create two handlers with testing configuration (no relay/discovery)
-        let server = QuicConnectionHandler::new_for_testing().await.expect("failed to create server");
-        let client = QuicConnectionHandler::new_for_testing().await.expect("failed to create client");
+        let server = QuicConnectionHandler::new_for_testing()
+            .await
+            .expect("failed to create server");
+        let client = QuicConnectionHandler::new_for_testing()
+            .await
+            .expect("failed to create client");
 
         // Get server's bound sockets (local addresses to connect to)
         let bound_sockets = server.endpoint().bound_sockets();
@@ -796,7 +825,10 @@ mod tests {
             let server = server;
             tokio::spawn(async move {
                 server.accept().await.expect("server accept failed");
-                server.accept_streams().await.expect("server accept streams failed");
+                server
+                    .accept_streams()
+                    .await
+                    .expect("server accept streams failed");
                 server.spawn_stream_readers();
                 server
             })
@@ -804,8 +836,14 @@ mod tests {
 
         // Client connects
         tokio::time::sleep(Duration::from_millis(100)).await;
-        client.connect(server_addr).await.expect("client connect failed");
-        client.create_streams().await.expect("client create streams failed");
+        client
+            .connect(server_addr)
+            .await
+            .expect("client connect failed");
+        client
+            .create_streams()
+            .await
+            .expect("client create streams failed");
         client.spawn_stream_readers();
 
         // Wait for server to be ready
@@ -816,16 +854,28 @@ mod tests {
 
         // Test message exchange on control channel
         let test_message = b"Hello from client!";
-        client.send(ChannelType::Control, test_message).await.expect("client send failed");
+        client
+            .send(ChannelType::Control, test_message)
+            .await
+            .expect("client send failed");
 
-        let received = server.recv(ChannelType::Control).await.expect("server recv failed");
+        let received = server
+            .recv(ChannelType::Control)
+            .await
+            .expect("server recv failed");
         assert_eq!(received, test_message);
 
         // Test message from server to client
         let reply_message = b"Hello from server!";
-        server.send(ChannelType::Control, reply_message).await.expect("server send failed");
+        server
+            .send(ChannelType::Control, reply_message)
+            .await
+            .expect("server send failed");
 
-        let received = client.recv(ChannelType::Control).await.expect("client recv failed");
+        let received = client
+            .recv(ChannelType::Control)
+            .await
+            .expect("client recv failed");
         assert_eq!(received, reply_message);
 
         // Close connections
@@ -842,8 +892,12 @@ mod tests {
     #[ignore = "requires network connectivity, run with --ignored"]
     async fn test_multiple_channel_streams() {
         // Create two handlers with testing configuration (no relay/discovery)
-        let server = QuicConnectionHandler::new_for_testing().await.expect("failed to create server");
-        let client = QuicConnectionHandler::new_for_testing().await.expect("failed to create client");
+        let server = QuicConnectionHandler::new_for_testing()
+            .await
+            .expect("failed to create server");
+        let client = QuicConnectionHandler::new_for_testing()
+            .await
+            .expect("failed to create client");
 
         // Get server's bound sockets (local addresses)
         let bound_sockets = server.endpoint().bound_sockets();
@@ -862,7 +916,10 @@ mod tests {
             let server = server;
             tokio::spawn(async move {
                 server.accept().await.expect("server accept failed");
-                server.accept_streams().await.expect("server accept streams failed");
+                server
+                    .accept_streams()
+                    .await
+                    .expect("server accept streams failed");
                 server.spawn_stream_readers();
                 server
             })
@@ -870,8 +927,14 @@ mod tests {
 
         // Client connects
         tokio::time::sleep(Duration::from_millis(100)).await;
-        client.connect(server_addr).await.expect("client connect failed");
-        client.create_streams().await.expect("client create streams failed");
+        client
+            .connect(server_addr)
+            .await
+            .expect("client connect failed");
+        client
+            .create_streams()
+            .await
+            .expect("client create streams failed");
         client.spawn_stream_readers();
 
         let server = server_handle.await.expect("server task panicked");

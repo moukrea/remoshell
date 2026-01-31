@@ -29,10 +29,7 @@ const BACKOFF_MULTIPLIER: f64 = 2.0;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalingMessage {
     /// Join a room with device ID.
-    Join {
-        device_id: String,
-        room_id: String,
-    },
+    Join { device_id: String, room_id: String },
     /// Leave the current room.
     Leave,
     /// Send an SDP offer.
@@ -58,21 +55,13 @@ pub enum SignalingMessage {
         target_device_id: Option<String>,
     },
     /// Peer joined the room.
-    PeerJoined {
-        device_id: String,
-    },
+    PeerJoined { device_id: String },
     /// Peer left the room.
-    PeerLeft {
-        device_id: String,
-    },
+    PeerLeft { device_id: String },
     /// Error from server.
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// Room joined successfully.
-    Joined {
-        room_id: String,
-    },
+    Joined { room_id: String },
 }
 
 /// Connection state for the signaling client.
@@ -111,21 +100,13 @@ pub enum SignalingEvent {
         from_device_id: Option<String>,
     },
     /// A peer joined the room.
-    PeerJoined {
-        device_id: String,
-    },
+    PeerJoined { device_id: String },
     /// A peer left the room.
-    PeerLeft {
-        device_id: String,
-    },
+    PeerLeft { device_id: String },
     /// Joined a room successfully.
-    RoomJoined {
-        room_id: String,
-    },
+    RoomJoined { room_id: String },
     /// Error occurred.
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Trait for signaling operations.
@@ -387,10 +368,7 @@ impl WebSocketSignalingClient {
                     .await;
             }
             SignalingMessage::Error { message } => {
-                let _ = self
-                    .event_tx
-                    .send(SignalingEvent::Error { message })
-                    .await;
+                let _ = self.event_tx.send(SignalingEvent::Error { message }).await;
             }
             _ => {
                 // Ignore other message types (Join, Leave are outgoing only)
@@ -502,15 +480,16 @@ impl WebSocketSignalingClient {
         mpsc::Receiver<Result<SignalingMessage>>,
     )> {
         // Validate the URL format
-        let _url = Url::parse(&self.config.server_url).map_err(|e| {
-            ProtocolError::HandshakeFailed(format!("invalid signaling URL: {}", e))
-        })?;
+        let _url = Url::parse(&self.config.server_url)
+            .map_err(|e| ProtocolError::HandshakeFailed(format!("invalid signaling URL: {}", e)))?;
 
         // Pass the string directly to connect_async (it implements IntoClientRequest for &str)
-        let (ws_stream, _) = connect_async(&self.config.server_url).await.map_err(|e| match e {
-            WsError::Io(io_err) => ProtocolError::from(io_err),
-            _ => ProtocolError::ConnectionClosed(format!("WebSocket connection failed: {}", e)),
-        })?;
+        let (ws_stream, _) = connect_async(&self.config.server_url)
+            .await
+            .map_err(|e| match e {
+                WsError::Io(io_err) => ProtocolError::from(io_err),
+                _ => ProtocolError::ConnectionClosed(format!("WebSocket connection failed: {}", e)),
+            })?;
 
         let (mut ws_sink, mut ws_stream) = ws_stream.split();
 

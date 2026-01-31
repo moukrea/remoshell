@@ -9,7 +9,9 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -51,23 +53,16 @@ pub struct ApprovalResult {
 #[derive(Debug, Clone)]
 pub enum TuiEvent {
     /// A new device connected.
-    DeviceConnected {
-        device_id: String,
-        name: String,
-    },
+    DeviceConnected { device_id: String, name: String },
     /// A device disconnected.
-    DeviceDisconnected {
-        device_id: String,
-    },
+    DeviceDisconnected { device_id: String },
     /// A new session was created.
     SessionCreated {
         session_id: String,
         device_id: String,
     },
     /// A session was terminated.
-    SessionTerminated {
-        session_id: String,
-    },
+    SessionTerminated { session_id: String },
     /// A device is requesting approval.
     ApprovalRequested {
         device_id: String,
@@ -76,10 +71,7 @@ pub enum TuiEvent {
         public_key: Option<[u8; 32]>,
     },
     /// An approval request was handled.
-    ApprovalHandled {
-        device_id: String,
-        approved: bool,
-    },
+    ApprovalHandled { device_id: String, approved: bool },
     /// Update statistics.
     StatsUpdate {
         devices_connected: usize,
@@ -151,7 +143,11 @@ impl Tab {
 
     /// Returns the previous tab.
     pub fn prev(&self) -> Self {
-        let idx = if self.index() == 0 { 3 } else { self.index() - 1 };
+        let idx = if self.index() == 0 {
+            3
+        } else {
+            self.index() - 1
+        };
         Tab::from_index(idx)
     }
 }
@@ -472,10 +468,7 @@ impl TuiApp {
                 // Handle session action (e.g., view details or kill)
                 if let Some(idx) = self.list_state.selected() {
                     if idx < self.sessions.len() {
-                        tracing::info!(
-                            "Selected session: {}",
-                            self.sessions[idx].id
-                        );
+                        tracing::info!("Selected session: {}", self.sessions[idx].id);
                     }
                 }
             }
@@ -559,7 +552,10 @@ impl TuiApp {
                     self.devices[pos].connected = false;
                 }
             }
-            TuiEvent::SessionCreated { session_id, device_id } => {
+            TuiEvent::SessionCreated {
+                session_id,
+                device_id,
+            } => {
                 self.sessions.push(SessionInfo {
                     id: session_id,
                     device_id,
@@ -569,7 +565,12 @@ impl TuiApp {
             TuiEvent::SessionTerminated { session_id } => {
                 self.sessions.retain(|s| s.id != session_id);
             }
-            TuiEvent::ApprovalRequested { device_id, name, ip_address, public_key } => {
+            TuiEvent::ApprovalRequested {
+                device_id,
+                name,
+                ip_address,
+                public_key,
+            } => {
                 self.approvals.push(ApprovalInfo {
                     device_id,
                     name,
@@ -671,7 +672,9 @@ impl TuiApp {
             Tab::Status => Self::render_status_tab(frame, chunks[1], stats, devices, sessions),
             Tab::Sessions => Self::render_sessions_tab(frame, chunks[1], sessions, list_state),
             Tab::Devices => Self::render_devices_tab(frame, chunks[1], devices, list_state),
-            Tab::Approvals => Self::render_approvals_tab(frame, chunks[1], approvals, always_trust, list_state),
+            Tab::Approvals => {
+                Self::render_approvals_tab(frame, chunks[1], approvals, always_trust, list_state)
+            }
         }
 
         // Render status bar
@@ -684,7 +687,9 @@ impl TuiApp {
             .iter()
             .map(|t| {
                 let style = if *t == current_tab {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -700,7 +705,11 @@ impl TuiApp {
             )
             .select(current_tab.index())
             .style(Style::default().fg(Color::White))
-            .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            );
 
         frame.render_widget(tabs, area);
     }
@@ -720,7 +729,12 @@ impl TuiApp {
         let text = vec![
             Line::from(vec![
                 Span::styled("Daemon Status: ", Style::default().fg(Color::Gray)),
-                Span::styled("Running", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Running",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -882,12 +896,14 @@ impl TuiApp {
                 };
 
                 let content = Line::from(vec![
-                    Span::styled(&a.name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(" | ID: "),
                     Span::styled(
-                        truncated_id,
-                        Style::default().fg(Color::DarkGray),
+                        &a.name,
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     ),
+                    Span::raw(" | ID: "),
+                    Span::styled(truncated_id, Style::default().fg(Color::DarkGray)),
                     Span::raw(" | IP: "),
                     Span::styled(ip_str, Style::default().fg(Color::Cyan)),
                     Span::raw(" | Waiting: "),
@@ -916,18 +932,36 @@ impl TuiApp {
 
         // Render help text with always_trust checkbox
         let trust_checkbox = if always_trust {
-            Span::styled("[X] Always trust", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            Span::styled(
+                "[X] Always trust",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             Span::styled("[ ] Always trust", Style::default().fg(Color::Gray))
         };
 
         let help_lines = vec![
             Line::from(vec![
-                Span::styled("  A", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "  A",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Accept  "),
-                Span::styled("R", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "R",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Reject  "),
-                Span::styled("T", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "T",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Toggle trust  "),
                 trust_checkbox,
             ]),
@@ -1063,8 +1097,7 @@ fn format_duration(secs: u64) -> String {
 ///
 /// The hex string should be 32 characters (16 bytes in hex).
 fn parse_device_id_from_hex(hex: &str) -> anyhow::Result<protocol::DeviceId> {
-    let bytes = hex::decode(hex)
-        .map_err(|e| anyhow::anyhow!("Invalid hex string: {}", e))?;
+    let bytes = hex::decode(hex).map_err(|e| anyhow::anyhow!("Invalid hex string: {}", e))?;
 
     if bytes.len() != 16 {
         return Err(anyhow::anyhow!(
@@ -1146,11 +1179,8 @@ pub fn process_approval_result(
     match result.action {
         ApprovalAction::Accept => {
             // Create a trusted device entry
-            let trusted_device = TrustedDevice::new(
-                device_id,
-                result.device_name.clone(),
-                public_key,
-            );
+            let trusted_device =
+                TrustedDevice::new(device_id, result.device_name.clone(), public_key);
 
             tracing::info!(
                 "Adding device {} ({}) to trust store",
@@ -1163,11 +1193,8 @@ pub fn process_approval_result(
         }
         ApprovalAction::Reject => {
             // Create a revoked device entry
-            let mut revoked_device = TrustedDevice::new(
-                device_id,
-                result.device_name.clone(),
-                public_key,
-            );
+            let mut revoked_device =
+                TrustedDevice::new(device_id, result.device_name.clone(), public_key);
             revoked_device.trust_level = TrustLevel::Revoked;
 
             tracing::info!(
@@ -1347,7 +1374,10 @@ mod tests {
         };
         assert_eq!(approval.device_id, "device-789");
         assert_eq!(approval.name, "New Device");
-        assert_eq!(approval.ip_address, Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))));
+        assert_eq!(
+            approval.ip_address,
+            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)))
+        );
         assert_eq!(approval.public_key, Some([42u8; 32]));
         assert!(approval.requested_at.elapsed().as_secs() < 1);
     }
@@ -1503,7 +1533,12 @@ mod tests {
 
         let event = rx.recv().await.unwrap();
         match event {
-            TuiEvent::ApprovalRequested { device_id, name, ip_address, public_key } => {
+            TuiEvent::ApprovalRequested {
+                device_id,
+                name,
+                ip_address,
+                public_key,
+            } => {
                 assert_eq!(device_id, "dev-approval");
                 assert_eq!(name, "Approval Device");
                 assert_eq!(ip_address, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
@@ -1561,8 +1596,8 @@ mod tests {
 
     #[test]
     fn test_process_approval_result_without_always_trust() {
-        use tempfile::TempDir;
         use crate::devices::TrustStore;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_trust_store.json");
@@ -1571,7 +1606,7 @@ mod tests {
         let result = ApprovalResult {
             device_id: "test-device-id-12345678".to_string(),
             action: ApprovalAction::Accept,
-            always_trust: false,  // Not saving to trust store
+            always_trust: false, // Not saving to trust store
             device_name: "Test Device".to_string(),
             public_key: Some([1u8; 32]),
         };
@@ -1586,8 +1621,8 @@ mod tests {
 
     #[test]
     fn test_process_approval_result_without_public_key() {
-        use tempfile::TempDir;
         use crate::devices::TrustStore;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_trust_store.json");
@@ -1596,9 +1631,9 @@ mod tests {
         let result = ApprovalResult {
             device_id: "test-device-id-12345678".to_string(),
             action: ApprovalAction::Accept,
-            always_trust: true,  // Want to save, but no public key
+            always_trust: true, // Want to save, but no public key
             device_name: "Test Device".to_string(),
-            public_key: None,  // No public key available
+            public_key: None, // No public key available
         };
 
         // Should succeed but not modify trust store (warning logged)
@@ -1611,8 +1646,8 @@ mod tests {
 
     #[test]
     fn test_process_approval_result_accept_with_always_trust() {
-        use tempfile::TempDir;
         use crate::devices::TrustStore;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_trust_store.json");
@@ -1641,8 +1676,8 @@ mod tests {
 
     #[test]
     fn test_process_approval_result_reject_with_always_trust() {
+        use crate::devices::{TrustLevel, TrustStore};
         use tempfile::TempDir;
-        use crate::devices::{TrustStore, TrustLevel};
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_trust_store.json");
@@ -1655,7 +1690,7 @@ mod tests {
         let result = ApprovalResult {
             device_id: device_id_hex.clone(),
             action: ApprovalAction::Reject,
-            always_trust: true,  // Permanently reject
+            always_trust: true, // Permanently reject
             device_name: "Blocked Device".to_string(),
             public_key: Some(identity.public_key_bytes()),
         };
@@ -1669,14 +1704,17 @@ mod tests {
         assert!(!trust_store.is_trusted(identity.device_id()).unwrap());
 
         // Verify it's specifically marked as revoked
-        let device = trust_store.get_device(identity.device_id()).unwrap().unwrap();
+        let device = trust_store
+            .get_device(identity.device_id())
+            .unwrap()
+            .unwrap();
         assert_eq!(device.trust_level, TrustLevel::Revoked);
     }
 
     #[test]
     fn test_process_approval_result_invalid_device_id() {
-        use tempfile::TempDir;
         use crate::devices::TrustStore;
+        use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("test_trust_store.json");

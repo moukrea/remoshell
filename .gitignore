@@ -36,3 +36,6 @@ Thumbs.db
 # Claude Code / Tasks
 .claude/
 .tasks/
+keystore.b64
+remoshell.keystore
+*.keystore

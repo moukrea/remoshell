@@ -10,6 +10,6 @@
 pub mod manager;
 
 pub use manager::{
-    ChannelType, ConnectionEvent, ConnectionState, DEFAULT_CONNECT_TIMEOUT, DEFAULT_STREAM_TIMEOUT,
-    QuicConfig, QuicManager, REMOSHELL_ALPN,
+    ChannelType, ConnectionEvent, ConnectionState, QuicConfig, QuicManager,
+    DEFAULT_CONNECT_TIMEOUT, DEFAULT_STREAM_TIMEOUT, REMOSHELL_ALPN,
 };

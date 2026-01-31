@@ -4,8 +4,8 @@
 //! message signing, and signature verification.
 
 use ed25519_dalek::{
-    Signature as Ed25519Signature, Signer, SigningKey, Verifier, VerifyingKey,
-    PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH,
+    Signature as Ed25519Signature, Signer, SigningKey, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH,
+    SECRET_KEY_LENGTH, SIGNATURE_LENGTH,
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -408,12 +408,7 @@ mod tests {
 
         // Each group should be 4 hex characters
         for (i, group) in fingerprint.split(':').enumerate() {
-            assert_eq!(
-                group.len(),
-                4,
-                "Group {} should have 4 characters",
-                i
-            );
+            assert_eq!(group.len(), 4, "Group {} should have 4 characters", i);
             assert!(
                 group.chars().all(|c| c.is_ascii_hexdigit()),
                 "Group {} should be hex",

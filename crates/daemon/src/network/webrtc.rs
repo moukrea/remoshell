@@ -57,7 +57,11 @@ impl IceServer {
     }
 
     /// Creates a new TURN server configuration with authentication.
-    pub fn turn(url: impl Into<String>, username: impl Into<String>, credential: impl Into<String>) -> Self {
+    pub fn turn(
+        url: impl Into<String>,
+        username: impl Into<String>,
+        credential: impl Into<String>,
+    ) -> Self {
         Self {
             urls: vec![url.into()],
             username: Some(username.into()),
@@ -219,7 +223,11 @@ impl WebRtcConnectionHandler {
         let mut message_rx = HashMap::new();
         let mut message_tx = HashMap::new();
 
-        for channel_type in [ChannelType::Control, ChannelType::Terminal, ChannelType::Files] {
+        for channel_type in [
+            ChannelType::Control,
+            ChannelType::Terminal,
+            ChannelType::Files,
+        ] {
             let (tx, rx) = mpsc::channel(256);
             message_tx.insert(channel_type, tx);
             message_rx.insert(channel_type, rx);
@@ -268,7 +276,8 @@ impl WebRtcConnectionHandler {
             .map_err(|e| {
                 ProtocolError::HandshakeFailed(format!("failed to create control channel: {}", e))
             })?;
-        self.setup_data_channel(ChannelType::Control, control).await?;
+        self.setup_data_channel(ChannelType::Control, control)
+            .await?;
 
         // Terminal channel: unordered for low latency
         let terminal_options = webrtc::data_channel::data_channel_init::RTCDataChannelInit {
@@ -282,7 +291,8 @@ impl WebRtcConnectionHandler {
             .map_err(|e| {
                 ProtocolError::HandshakeFailed(format!("failed to create terminal channel: {}", e))
             })?;
-        self.setup_data_channel(ChannelType::Terminal, terminal).await?;
+        self.setup_data_channel(ChannelType::Terminal, terminal)
+            .await?;
 
         // Files channel: ordered, reliable
         let files_options = webrtc::data_channel::data_channel_init::RTCDataChannelInit {
@@ -306,8 +316,8 @@ impl WebRtcConnectionHandler {
         let data_channels = self.data_channels.clone();
         let message_tx = self.message_tx.clone();
 
-        self.peer_connection.on_data_channel(Box::new(
-            move |channel: Arc<RTCDataChannel>| {
+        self.peer_connection
+            .on_data_channel(Box::new(move |channel: Arc<RTCDataChannel>| {
                 let data_channels = data_channels.clone();
                 let message_tx = message_tx.clone();
 
@@ -348,8 +358,7 @@ impl WebRtcConnectionHandler {
 
                     tracing::debug!("data channel '{}' established", label);
                 })
-            },
-        ));
+            }));
     }
 
     /// Sets up a data channel with message handling.
@@ -386,11 +395,9 @@ impl WebRtcConnectionHandler {
 
     /// Creates an SDP offer for signaling.
     pub async fn create_offer(&self) -> Result<RTCSessionDescription> {
-        let offer = self
-            .peer_connection
-            .create_offer(None)
-            .await
-            .map_err(|e| ProtocolError::HandshakeFailed(format!("failed to create offer: {}", e)))?;
+        let offer = self.peer_connection.create_offer(None).await.map_err(|e| {
+            ProtocolError::HandshakeFailed(format!("failed to create offer: {}", e))
+        })?;
 
         self.peer_connection
             .set_local_description(offer.clone())
@@ -408,7 +415,9 @@ impl WebRtcConnectionHandler {
             .peer_connection
             .create_answer(None)
             .await
-            .map_err(|e| ProtocolError::HandshakeFailed(format!("failed to create answer: {}", e)))?;
+            .map_err(|e| {
+                ProtocolError::HandshakeFailed(format!("failed to create answer: {}", e))
+            })?;
 
         self.peer_connection
             .set_local_description(answer.clone())
@@ -439,7 +448,9 @@ impl WebRtcConnectionHandler {
             move |state: webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState| {
                 let tx = tx.clone();
                 Box::pin(async move {
-                    if state == webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState::Complete {
+                    if state
+                        == webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState::Complete
+                    {
                         let _ = tx.send(()).await;
                     }
                 })
@@ -554,9 +565,9 @@ impl WebRtcConnectionHandler {
             ProtocolError::ConnectionClosed(format!("{:?} channel not available", channel_type))
         })?;
 
-        rx.recv().await.ok_or_else(|| {
-            ProtocolError::ConnectionClosed("channel closed".into())
-        })
+        rx.recv()
+            .await
+            .ok_or_else(|| ProtocolError::ConnectionClosed("channel closed".into()))
     }
 
     /// Sends encrypted data over a data channel.
@@ -668,7 +679,9 @@ mod tests {
         let identity = DeviceIdentity::generate();
         let config = WebRtcConfig::default();
 
-        let handler = WebRtcConnectionHandler::new(config, identity).await.unwrap();
+        let handler = WebRtcConnectionHandler::new(config, identity)
+            .await
+            .unwrap();
         let result = handler.create_data_channels().await;
         assert!(result.is_ok());
     }
@@ -678,7 +691,9 @@ mod tests {
         let identity = DeviceIdentity::generate();
         let config = WebRtcConfig::default();
 
-        let handler = WebRtcConnectionHandler::new(config, identity).await.unwrap();
+        let handler = WebRtcConnectionHandler::new(config, identity)
+            .await
+            .unwrap();
         handler.create_data_channels().await.unwrap();
 
         let offer = handler.create_offer().await;
@@ -703,23 +718,23 @@ mod tests {
         let answerer_identity = DeviceIdentity::generate();
 
         // Create handlers
-        let offerer = WebRtcConnectionHandler::new(
-            WebRtcConfig::default(),
-            offerer_identity,
-        )
-        .await
-        .expect("failed to create offerer");
+        let offerer = WebRtcConnectionHandler::new(WebRtcConfig::default(), offerer_identity)
+            .await
+            .expect("failed to create offerer");
 
-        let answerer = WebRtcConnectionHandler::new(
-            WebRtcConfig::default(),
-            answerer_identity,
-        )
-        .await
-        .expect("failed to create answerer");
+        let answerer = WebRtcConnectionHandler::new(WebRtcConfig::default(), answerer_identity)
+            .await
+            .expect("failed to create answerer");
 
         // Offerer creates data channels and offer
-        offerer.create_data_channels().await.expect("failed to create data channels");
-        let offer = offerer.create_offer().await.expect("failed to create offer");
+        offerer
+            .create_data_channels()
+            .await
+            .expect("failed to create data channels");
+        let offer = offerer
+            .create_offer()
+            .await
+            .expect("failed to create offer");
 
         // Set up answerer to receive data channels
         answerer.setup_incoming_data_channels().await;
@@ -729,7 +744,10 @@ mod tests {
             .set_remote_description(offer)
             .await
             .expect("failed to set remote description");
-        let answer = answerer.create_answer().await.expect("failed to create answer");
+        let answer = answerer
+            .create_answer()
+            .await
+            .expect("failed to create answer");
 
         // Offerer processes answer
         offerer

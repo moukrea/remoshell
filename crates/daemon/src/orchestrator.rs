@@ -18,7 +18,9 @@ use crate::config::Config;
 use crate::devices::TrustStore;
 use crate::files::{DirectoryBrowser, FileTransfer};
 use crate::network::{
-    signaling::{ConnectionState, SignalingClient, SignalingConfig, SignalingEvent, WebSocketSignalingClient},
+    signaling::{
+        ConnectionState, SignalingClient, SignalingConfig, SignalingEvent, WebSocketSignalingClient,
+    },
     webrtc::{WebRtcConfig, WebRtcConnectionHandler},
     Connection,
 };
@@ -101,10 +103,7 @@ impl DaemonOrchestrator {
         let identity_path = config.daemon.data_dir.join("identity.key");
         let identity = Self::load_or_generate_identity(&identity_path)?;
 
-        info!(
-            "Daemon identity: {}",
-            identity.device_id().fingerprint()
-        );
+        info!("Daemon identity: {}", identity.device_id().fingerprint());
 
         // Initialize session manager
         let session_manager = Arc::new(SessionManagerImpl::new());
@@ -166,7 +165,10 @@ impl DaemonOrchestrator {
             let bytes = std::fs::read(path)
                 .with_context(|| format!("Failed to read identity file: {}", path.display()))?;
             if bytes.len() != 32 {
-                anyhow::bail!("Invalid identity file: expected 32 bytes, got {}", bytes.len());
+                anyhow::bail!(
+                    "Invalid identity file: expected 32 bytes, got {}",
+                    bytes.len()
+                );
             }
             let mut key = [0u8; 32];
             key.copy_from_slice(&bytes);
@@ -369,7 +371,9 @@ impl DaemonOrchestrator {
         sdp: String,
         from_device_id: Option<String>,
     ) {
-        let device_id = from_device_id.clone().unwrap_or_else(|| "unknown".to_string());
+        let device_id = from_device_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
 
         // Create WebRTC handler
         let ice_servers = config
@@ -392,8 +396,9 @@ impl DaemonOrchestrator {
         handler.setup_incoming_data_channels().await;
 
         // Parse and set remote description (offer)
-        let offer = webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(sdp)
-            .expect("Invalid SDP offer");
+        let offer =
+            webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(sdp)
+                .expect("Invalid SDP offer");
         if let Err(e) = handler.set_remote_description(offer).await {
             error!("Failed to set remote description: {}", e);
             return;
@@ -447,7 +452,10 @@ impl DaemonOrchestrator {
 
         let mut conns = connections.write().await;
         if let Some(conn) = conns.get_mut(&device_id) {
-            let answer = webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(sdp)
+            let answer =
+                webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(
+                    sdp,
+                )
                 .expect("Invalid SDP answer");
             if let Err(e) = conn.handler.set_remote_description(answer).await {
                 error!("Failed to set remote description for answer: {}", e);
@@ -477,7 +485,12 @@ impl DaemonOrchestrator {
                 ..Default::default()
             };
 
-            if let Err(e) = conn.handler.peer_connection().add_ice_candidate(candidate_init).await {
+            if let Err(e) = conn
+                .handler
+                .peer_connection()
+                .add_ice_candidate(candidate_init)
+                .await
+            {
                 error!("Failed to add ICE candidate: {}", e);
             }
         } else {
@@ -498,7 +511,9 @@ impl DaemonOrchestrator {
             }
             *state = OrchestratorState::ShuttingDown;
         }
-        self.emit_event(OrchestratorEvent::StateChanged(OrchestratorState::ShuttingDown));
+        self.emit_event(OrchestratorEvent::StateChanged(
+            OrchestratorState::ShuttingDown,
+        ));
 
         info!("Stopping daemon orchestrator...");
 

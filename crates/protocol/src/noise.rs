@@ -113,7 +113,9 @@ impl NoiseSession {
         let handshake = builder
             .local_private_key(&keypair)
             .build_initiator()
-            .map_err(|e| ProtocolError::HandshakeFailed(format!("failed to build initiator: {}", e)))?;
+            .map_err(|e| {
+                ProtocolError::HandshakeFailed(format!("failed to build initiator: {}", e))
+            })?;
 
         Ok(Self {
             handshake: Some(handshake),
@@ -138,7 +140,9 @@ impl NoiseSession {
         let handshake = builder
             .local_private_key(&keypair)
             .build_responder()
-            .map_err(|e| ProtocolError::HandshakeFailed(format!("failed to build responder: {}", e)))?;
+            .map_err(|e| {
+                ProtocolError::HandshakeFailed(format!("failed to build responder: {}", e))
+            })?;
 
         Ok(Self {
             handshake: Some(handshake),
@@ -201,18 +205,21 @@ impl NoiseSession {
     /// The payload is optional data to include in the handshake message.
     /// Returns the encrypted handshake message to send to the peer.
     pub fn write_handshake_message(&mut self, payload: &[u8]) -> Result<Vec<u8>> {
-        let handshake = self.handshake.as_mut()
+        let handshake = self
+            .handshake
+            .as_mut()
             .ok_or(ProtocolError::HandshakeIncomplete)?;
 
         // Verify we're in a state where we can write
         match (&self.role, &self.phase) {
-            (Role::Initiator, HandshakePhase::InitiatorStart) |
-            (Role::Initiator, HandshakePhase::InitiatorSendFinal) |
-            (Role::Responder, HandshakePhase::ResponderSendResponse) => {}
+            (Role::Initiator, HandshakePhase::InitiatorStart)
+            | (Role::Initiator, HandshakePhase::InitiatorSendFinal)
+            | (Role::Responder, HandshakePhase::ResponderSendResponse) => {}
             _ => {
-                return Err(ProtocolError::HandshakeFailed(
-                    format!("cannot write in current phase: {:?}", self.phase)
-                ));
+                return Err(ProtocolError::HandshakeFailed(format!(
+                    "cannot write in current phase: {:?}",
+                    self.phase
+                )));
             }
         }
 
@@ -224,9 +231,7 @@ impl NoiseSession {
             (Role::Initiator, HandshakePhase::InitiatorStart) => {
                 HandshakePhase::InitiatorWaitingForResponse
             }
-            (Role::Initiator, HandshakePhase::InitiatorSendFinal) => {
-                HandshakePhase::Complete
-            }
+            (Role::Initiator, HandshakePhase::InitiatorSendFinal) => HandshakePhase::Complete,
             (Role::Responder, HandshakePhase::ResponderSendResponse) => {
                 HandshakePhase::ResponderWaitingForFinal
             }
@@ -240,18 +245,21 @@ impl NoiseSession {
     ///
     /// Returns any payload included in the handshake message.
     pub fn read_handshake_message(&mut self, message: &[u8]) -> Result<Vec<u8>> {
-        let handshake = self.handshake.as_mut()
+        let handshake = self
+            .handshake
+            .as_mut()
             .ok_or(ProtocolError::HandshakeIncomplete)?;
 
         // Verify we're in a state where we can read
         match (&self.role, &self.phase) {
-            (Role::Initiator, HandshakePhase::InitiatorWaitingForResponse) |
-            (Role::Responder, HandshakePhase::ResponderStart) |
-            (Role::Responder, HandshakePhase::ResponderWaitingForFinal) => {}
+            (Role::Initiator, HandshakePhase::InitiatorWaitingForResponse)
+            | (Role::Responder, HandshakePhase::ResponderStart)
+            | (Role::Responder, HandshakePhase::ResponderWaitingForFinal) => {}
             _ => {
-                return Err(ProtocolError::HandshakeFailed(
-                    format!("cannot read in current phase: {:?}", self.phase)
-                ));
+                return Err(ProtocolError::HandshakeFailed(format!(
+                    "cannot read in current phase: {:?}",
+                    self.phase
+                )));
             }
         }
 
@@ -266,9 +274,7 @@ impl NoiseSession {
             (Role::Responder, HandshakePhase::ResponderStart) => {
                 HandshakePhase::ResponderSendResponse
             }
-            (Role::Responder, HandshakePhase::ResponderWaitingForFinal) => {
-                HandshakePhase::Complete
-            }
+            (Role::Responder, HandshakePhase::ResponderWaitingForFinal) => HandshakePhase::Complete,
             _ => self.phase,
         };
 
@@ -279,19 +285,20 @@ impl NoiseSession {
     ///
     /// This should be called after the handshake is complete.
     fn extract_peer_identity(&mut self) -> Result<()> {
-        let handshake = self.handshake.as_ref()
+        let handshake = self
+            .handshake
+            .as_ref()
             .ok_or(ProtocolError::HandshakeIncomplete)?;
 
-        let remote_static = handshake.get_remote_static()
-            .ok_or_else(|| ProtocolError::HandshakeFailed(
-                "remote static key not available".to_string()
-            ))?;
+        let remote_static = handshake.get_remote_static().ok_or_else(|| {
+            ProtocolError::HandshakeFailed("remote static key not available".to_string())
+        })?;
 
         // The remote static key from Noise is an X25519 public key.
         // We need to store it, but we can't directly convert it to an Ed25519 key.
         // Instead, we'll derive a DeviceId from the X25519 public key directly.
-        use sha2::{Digest, Sha256};
         use crate::crypto::DEVICE_ID_LENGTH;
+        use sha2::{Digest, Sha256};
 
         let hash = Sha256::digest(remote_static);
         let mut device_id_bytes = [0u8; DEVICE_ID_LENGTH];
@@ -340,7 +347,9 @@ impl NoiseSession {
         // Extract peer identity before transitioning
         self.extract_peer_identity()?;
 
-        let handshake = self.handshake.take()
+        let handshake = self
+            .handshake
+            .take()
             .ok_or(ProtocolError::HandshakeIncomplete)?;
 
         let transport = handshake.into_transport_mode()?;
@@ -357,7 +366,9 @@ impl NoiseSession {
     /// Returns the ciphertext which includes the authentication tag.
     /// The handshake must be complete before calling this method.
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let transport = self.transport.as_mut()
+        let transport = self
+            .transport
+            .as_mut()
             .ok_or(ProtocolError::HandshakeIncomplete)?;
 
         if plaintext.len() > MAX_NOISE_MESSAGE_SIZE - NOISE_OVERHEAD {
@@ -377,7 +388,9 @@ impl NoiseSession {
     /// Returns the decrypted plaintext.
     /// The handshake must be complete before calling this method.
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        let transport = self.transport.as_mut()
+        let transport = self
+            .transport
+            .as_mut()
             .ok_or(ProtocolError::HandshakeIncomplete)?;
 
         if ciphertext.len() > MAX_NOISE_MESSAGE_SIZE {
@@ -419,9 +432,9 @@ impl SecureHandshake for NoiseSession {
     fn write_message(&mut self, payload: &[u8]) -> Result<Option<Vec<u8>>> {
         // Check if we should write
         match (&self.role, &self.phase) {
-            (Role::Initiator, HandshakePhase::InitiatorStart) |
-            (Role::Initiator, HandshakePhase::InitiatorSendFinal) |
-            (Role::Responder, HandshakePhase::ResponderSendResponse) => {
+            (Role::Initiator, HandshakePhase::InitiatorStart)
+            | (Role::Initiator, HandshakePhase::InitiatorSendFinal)
+            | (Role::Responder, HandshakePhase::ResponderSendResponse) => {
                 Ok(Some(self.write_handshake_message(payload)?))
             }
             (_, HandshakePhase::Complete) => Ok(None),
@@ -488,7 +501,10 @@ mod tests {
 
         // Message 1: Initiator -> Responder (-> e)
         let msg1 = initiator.write_handshake_message(&[]).unwrap();
-        assert_eq!(initiator.phase(), HandshakePhase::InitiatorWaitingForResponse);
+        assert_eq!(
+            initiator.phase(),
+            HandshakePhase::InitiatorWaitingForResponse
+        );
 
         // Responder receives message 1
         let payload1 = responder.read_handshake_message(&msg1).unwrap();

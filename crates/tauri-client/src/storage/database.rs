@@ -6,7 +6,7 @@
 //! - Connection history logging
 //! - Settings storage
 
-use rusqlite::{Connection, OptionalExtension, Result as SqliteResult, params};
+use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
 use std::path::Path;
 use thiserror::Error;
 

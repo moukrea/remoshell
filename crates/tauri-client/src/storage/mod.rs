@@ -16,8 +16,8 @@ pub use database::{
 };
 
 pub use keychain::{
-    KeychainBackend, KeychainError, KeychainManager, KeychainResult, decode_secret_key,
-    encode_secret_key,
+    decode_secret_key, encode_secret_key, KeychainBackend, KeychainError, KeychainManager,
+    KeychainResult,
 };
 
 #[cfg(test)]

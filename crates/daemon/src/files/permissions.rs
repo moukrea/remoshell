@@ -278,9 +278,10 @@ impl PathPermissions {
             format!("Failed to parse permissions file: {}", self.path.display())
         })?;
 
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on permissions store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on permissions store"))?;
 
         devices.clear();
         for device_perms in data.devices {
@@ -307,9 +308,10 @@ impl PathPermissions {
             })?;
         }
 
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on permissions store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on permissions store"))?;
 
         let data = PermissionStoreData {
             version: 1,
@@ -346,9 +348,10 @@ impl PathPermissions {
 
     /// Set permissions for a device.
     pub fn set_device_permissions(&self, permissions: DevicePermissions) -> Result<()> {
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on permissions store")
-        })?;
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on permissions store"))?;
 
         tracing::info!(
             "Setting permissions for device {} with {} paths",
@@ -361,19 +364,27 @@ impl PathPermissions {
     }
 
     /// Get permissions for a device.
-    pub fn get_device_permissions(&self, device_id: &DeviceId) -> Result<Option<DevicePermissions>> {
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on permissions store")
-        })?;
+    pub fn get_device_permissions(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<Option<DevicePermissions>> {
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on permissions store"))?;
 
         Ok(devices.get(device_id).cloned())
     }
 
     /// Remove permissions for a device.
-    pub fn remove_device_permissions(&self, device_id: &DeviceId) -> Result<Option<DevicePermissions>> {
-        let mut devices = self.devices.write().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire write lock on permissions store")
-        })?;
+    pub fn remove_device_permissions(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<Option<DevicePermissions>> {
+        let mut devices = self
+            .devices
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on permissions store"))?;
 
         Ok(devices.remove(device_id))
     }
@@ -387,9 +398,10 @@ impl PathPermissions {
             return Ok(false);
         }
 
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on permissions store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on permissions store"))?;
 
         Ok(devices
             .get(device_id)
@@ -406,9 +418,10 @@ impl PathPermissions {
             return Ok(false);
         }
 
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on permissions store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on permissions store"))?;
 
         Ok(devices
             .get(device_id)
@@ -425,9 +438,10 @@ impl PathPermissions {
             return Ok(false);
         }
 
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on permissions store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on permissions store"))?;
 
         Ok(devices
             .get(device_id)
@@ -476,9 +490,10 @@ impl PathPermissions {
 
     /// List all devices with permissions.
     pub fn list_devices(&self) -> Result<Vec<DeviceId>> {
-        let devices = self.devices.read().map_err(|_| {
-            anyhow::anyhow!("Failed to acquire read lock on permissions store")
-        })?;
+        let devices = self
+            .devices
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on permissions store"))?;
 
         Ok(devices.keys().cloned().collect())
     }
@@ -695,8 +710,12 @@ mod tests {
         let device2 = create_test_device_id();
 
         let store = PathPermissions::new(temp_dir.path().join("perms.json"), vec![]);
-        store.set_device_permissions(DevicePermissions::new(device1)).unwrap();
-        store.set_device_permissions(DevicePermissions::new(device2)).unwrap();
+        store
+            .set_device_permissions(DevicePermissions::new(device1))
+            .unwrap();
+        store
+            .set_device_permissions(DevicePermissions::new(device2))
+            .unwrap();
 
         let devices = store.list_devices().unwrap();
         assert_eq!(devices.len(), 2);
@@ -710,7 +729,9 @@ mod tests {
         let mut perms = DevicePermissions::new(device_id);
 
         perms.add_path(PathPermission::read_only(PathBuf::from("/home/user/docs")));
-        perms.add_path(PathPermission::read_write(PathBuf::from("/home/user/uploads")));
+        perms.add_path(PathPermission::read_write(PathBuf::from(
+            "/home/user/uploads",
+        )));
         perms.add_path(PathPermission::new(
             PathBuf::from("/home/user/restricted"),
             PermissionLevel::None,
@@ -737,11 +758,7 @@ mod tests {
 
     #[test]
     fn test_path_permission_serialization() {
-        let perm = PathPermission::new(
-            PathBuf::from("/home/user"),
-            PermissionLevel::Read,
-            true,
-        );
+        let perm = PathPermission::new(PathBuf::from("/home/user"), PermissionLevel::Read, true);
 
         let json = serde_json::to_string_pretty(&perm).unwrap();
         let restored: PathPermission = serde_json::from_str(&json).unwrap();

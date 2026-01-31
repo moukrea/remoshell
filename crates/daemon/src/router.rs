@@ -437,13 +437,13 @@ impl<S: SessionManager> MessageRouter<S> {
             }
             Ok(None) => {
                 // New device - add as unknown and require approval
-                let public_key: [u8; 32] = req
-                    .public_key
-                    .try_into()
-                    .map_err(|_| RouterError::InvalidRequest("Invalid public key length".to_string()))?;
+                let public_key: [u8; 32] = req.public_key.try_into().map_err(|_| {
+                    RouterError::InvalidRequest("Invalid public key length".to_string())
+                })?;
 
                 use crate::devices::TrustedDevice;
-                let new_device = TrustedDevice::new_unknown(device_id, req.name.clone(), public_key);
+                let new_device =
+                    TrustedDevice::new_unknown(device_id, req.name.clone(), public_key);
 
                 self.trust_store
                     .add_device(new_device)
@@ -620,16 +620,15 @@ mod tests {
         }
     }
 
-    fn create_test_router(
-        temp_dir: &TempDir,
-    ) -> MessageRouter<MockSessionManager> {
+    fn create_test_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
         let session_manager = Arc::new(MockSessionManager::new());
         let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
         let file_transfer = Arc::new(
             FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
                 .with_temp_dir(temp_dir.path().join("tmp")),
         );
-        let directory_browser = Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
 
         MessageRouter::new(
@@ -640,16 +639,15 @@ mod tests {
         )
     }
 
-    fn create_failing_router(
-        temp_dir: &TempDir,
-    ) -> MessageRouter<MockSessionManager> {
+    fn create_failing_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
         let session_manager = Arc::new(MockSessionManager::failing());
         let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
         let file_transfer = Arc::new(
             FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
                 .with_temp_dir(temp_dir.path().join("tmp")),
         );
-        let directory_browser = Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
 
         MessageRouter::new(
@@ -841,7 +839,11 @@ mod tests {
         let router = create_test_router(&temp_dir);
 
         let msg = Message::FileDownloadRequest(FileDownloadRequest {
-            path: temp_dir.path().join("download.txt").to_string_lossy().to_string(),
+            path: temp_dir
+                .path()
+                .join("download.txt")
+                .to_string_lossy()
+                .to_string(),
             offset: 0,
             chunk_size: 1024,
         });

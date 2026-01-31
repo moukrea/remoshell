@@ -40,7 +40,10 @@ pub trait SessionManager: Send + Sync {
     /// Attaches to an existing session.
     ///
     /// Returns a receiver for the session's output broadcast.
-    async fn attach(&self, session_id: &SessionId) -> Result<broadcast::Receiver<Vec<u8>>, SessionError>;
+    async fn attach(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<broadcast::Receiver<Vec<u8>>, SessionError>;
 
     /// Detaches from a session.
     ///
@@ -51,14 +54,23 @@ pub trait SessionManager: Send + Sync {
     async fn write(&self, session_id: &SessionId, data: &[u8]) -> Result<(), SessionError>;
 
     /// Resizes a session's terminal.
-    async fn resize(&self, session_id: &SessionId, cols: u16, rows: u16) -> Result<(), SessionError>;
+    async fn resize(
+        &self,
+        session_id: &SessionId,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), SessionError>;
 
     /// Kills a session.
     ///
     /// # Arguments
     /// * `session_id` - The session to kill.
     /// * `signal` - Optional signal to send. If None, just terminates.
-    async fn kill(&self, session_id: &SessionId, signal: Option<i32>) -> Result<SessionStatus, SessionError>;
+    async fn kill(
+        &self,
+        session_id: &SessionId,
+        signal: Option<i32>,
+    ) -> Result<SessionStatus, SessionError>;
 
     /// Lists all active sessions.
     fn list(&self) -> Vec<SessionInfo>;
@@ -171,8 +183,10 @@ impl SessionManager for SessionManagerImpl {
         session.start_read_loop();
 
         // Store the session
-        self.sessions
-            .insert(session_id.clone(), Arc::new(tokio::sync::Mutex::new(session)));
+        self.sessions.insert(
+            session_id.clone(),
+            Arc::new(tokio::sync::Mutex::new(session)),
+        );
 
         tracing::info!(
             session_id = %session_id,
@@ -185,7 +199,10 @@ impl SessionManager for SessionManagerImpl {
         Ok((session_id, pid))
     }
 
-    async fn attach(&self, session_id: &SessionId) -> Result<broadcast::Receiver<Vec<u8>>, SessionError> {
+    async fn attach(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<broadcast::Receiver<Vec<u8>>, SessionError> {
         let session_arc = self
             .sessions
             .get(session_id)
@@ -232,7 +249,12 @@ impl SessionManager for SessionManagerImpl {
         session.write(data).await
     }
 
-    async fn resize(&self, session_id: &SessionId, cols: u16, rows: u16) -> Result<(), SessionError> {
+    async fn resize(
+        &self,
+        session_id: &SessionId,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), SessionError> {
         let session_arc = self
             .sessions
             .get(session_id)
@@ -243,7 +265,11 @@ impl SessionManager for SessionManagerImpl {
         session.resize(cols, rows).await
     }
 
-    async fn kill(&self, session_id: &SessionId, signal: Option<i32>) -> Result<SessionStatus, SessionError> {
+    async fn kill(
+        &self,
+        session_id: &SessionId,
+        signal: Option<i32>,
+    ) -> Result<SessionStatus, SessionError> {
         let session_arc = self
             .sessions
             .get(session_id)
@@ -288,7 +314,10 @@ impl SessionManager for SessionManagerImpl {
     }
 
     async fn get(&self, session_id: &SessionId) -> Option<SessionInfo> {
-        let session_arc = self.sessions.get(session_id).map(|entry| Arc::clone(entry.value()))?;
+        let session_arc = self
+            .sessions
+            .get(session_id)
+            .map(|entry| Arc::clone(entry.value()))?;
 
         let session = session_arc.lock().await;
         let (cols, rows) = session.size();
@@ -326,7 +355,11 @@ mod tests {
             .create(Some("/bin/sh".to_string()), 80, 24, vec![], None)
             .await;
 
-        assert!(result.is_ok(), "Failed to create session: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create session: {:?}",
+            result.err()
+        );
 
         let (session_id, pid) = result.unwrap();
         assert!(!session_id.is_empty());

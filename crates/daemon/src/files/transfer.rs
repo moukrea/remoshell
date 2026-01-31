@@ -97,7 +97,13 @@ pub struct UploadState {
 
 impl UploadState {
     /// Create a new upload state.
-    fn new(destination: PathBuf, temp_path: PathBuf, total_size: u64, mode: u32, overwrite: bool) -> Self {
+    fn new(
+        destination: PathBuf,
+        temp_path: PathBuf,
+        total_size: u64,
+        mode: u32,
+        overwrite: bool,
+    ) -> Self {
         Self {
             destination,
             temp_path,
@@ -238,7 +244,13 @@ impl FileTransfer {
         let temp_path = self.temp_dir.join(temp_filename);
 
         // Create the upload state
-        let mut state = UploadState::new(destination.clone(), temp_path.clone(), size, mode, overwrite);
+        let mut state = UploadState::new(
+            destination.clone(),
+            temp_path.clone(),
+            size,
+            mode,
+            overwrite,
+        );
 
         // Create and open the temp file
         let file = OpenOptions::new()
@@ -251,9 +263,10 @@ impl FileTransfer {
 
         // Store the upload state
         let key = path.to_string_lossy().to_string();
-        let mut uploads = self.uploads.write().map_err(|_| {
-            TransferError::Io(std::io::Error::other("lock poisoned"))
-        })?;
+        let mut uploads = self
+            .uploads
+            .write()
+            .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
 
         uploads.insert(key, state);
 
@@ -264,9 +277,10 @@ impl FileTransfer {
     pub fn write_chunk(&self, path: &Path, offset: u64, data: &[u8]) -> Result<(), TransferError> {
         let key = path.to_string_lossy().to_string();
 
-        let mut uploads = self.uploads.write().map_err(|_| {
-            TransferError::Io(std::io::Error::other("lock poisoned"))
-        })?;
+        let mut uploads = self
+            .uploads
+            .write()
+            .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
 
         let state = uploads
             .get_mut(&key)
@@ -304,9 +318,10 @@ impl FileTransfer {
 
         // Remove the upload state
         let state = {
-            let mut uploads = self.uploads.write().map_err(|_| {
-                TransferError::Io(std::io::Error::other("lock poisoned"))
-            })?;
+            let mut uploads = self
+                .uploads
+                .write()
+                .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
 
             uploads
                 .remove(&key)
@@ -357,9 +372,10 @@ impl FileTransfer {
         let key = path.to_string_lossy().to_string();
 
         let state = {
-            let mut uploads = self.uploads.write().map_err(|_| {
-                TransferError::Io(std::io::Error::other("lock poisoned"))
-            })?;
+            let mut uploads = self
+                .uploads
+                .write()
+                .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
 
             uploads.remove(&key)
         };
@@ -381,12 +397,20 @@ impl FileTransfer {
     }
 
     /// Clean up stale uploads older than the given duration.
-    pub fn cleanup_stale_uploads(&self, _max_age: std::time::Duration) -> Result<(), TransferError> {
+    pub fn cleanup_stale_uploads(
+        &self,
+        _max_age: std::time::Duration,
+    ) -> Result<(), TransferError> {
         // For now, just clean up the temp directory
         if self.temp_dir.exists() {
             for entry in fs::read_dir(&self.temp_dir)? {
                 let entry = entry?;
-                if entry.path().extension().map(|e| e == "tmp").unwrap_or(false) {
+                if entry
+                    .path()
+                    .extension()
+                    .map(|e| e == "tmp")
+                    .unwrap_or(false)
+                {
                     // Check if file is old enough
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(modified) = metadata.modified() {
@@ -544,11 +568,15 @@ mod tests {
         let dest_path = upload_dir.join("uploaded.txt");
 
         // Start upload
-        transfer.start_upload(&dest_path, content.len() as u64, 0o644, false).unwrap();
+        transfer
+            .start_upload(&dest_path, content.len() as u64, 0o644, false)
+            .unwrap();
 
         // Write chunks
         transfer.write_chunk(&dest_path, 0, &content[..16]).unwrap();
-        transfer.write_chunk(&dest_path, 16, &content[16..]).unwrap();
+        transfer
+            .write_chunk(&dest_path, 16, &content[16..])
+            .unwrap();
 
         // Verify upload status
         let (offset, total) = transfer.get_upload_status(&dest_path).unwrap();
@@ -578,11 +606,16 @@ mod tests {
 
         let dest_path = upload_dir.join("bad_checksum.txt");
 
-        transfer.start_upload(&dest_path, content.len() as u64, 0o644, false).unwrap();
+        transfer
+            .start_upload(&dest_path, content.len() as u64, 0o644, false)
+            .unwrap();
         transfer.write_chunk(&dest_path, 0, content).unwrap();
 
         let result = transfer.complete_upload(&dest_path, &wrong_checksum);
-        assert!(matches!(result, Err(TransferError::ChecksumMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(TransferError::ChecksumMismatch { .. })
+        ));
 
         // File should not exist
         assert!(!dest_path.exists());
@@ -600,7 +633,9 @@ mod tests {
 
         let dest_path = upload_dir.join("out_of_order.txt");
 
-        transfer.start_upload(&dest_path, 100, 0o644, false).unwrap();
+        transfer
+            .start_upload(&dest_path, 100, 0o644, false)
+            .unwrap();
 
         // Try to write chunk at wrong offset
         let result = transfer.write_chunk(&dest_path, 50, b"wrong offset");
@@ -635,7 +670,9 @@ mod tests {
         let transfer = FileTransfer::new(browser, 100 * 1024 * 1024)
             .with_temp_dir(temp_dir.path().join("tmp"));
 
-        transfer.start_upload(&existing_file, content.len() as u64, 0o644, true).unwrap();
+        transfer
+            .start_upload(&existing_file, content.len() as u64, 0o644, true)
+            .unwrap();
         transfer.write_chunk(&existing_file, 0, content).unwrap();
         transfer.complete_upload(&existing_file, &checksum).unwrap();
 
@@ -678,8 +715,12 @@ mod tests {
 
         let dest_path = upload_dir.join("cancelled.txt");
 
-        transfer.start_upload(&dest_path, 100, 0o644, false).unwrap();
-        transfer.write_chunk(&dest_path, 0, b"partial data").unwrap();
+        transfer
+            .start_upload(&dest_path, 100, 0o644, false)
+            .unwrap();
+        transfer
+            .write_chunk(&dest_path, 0, b"partial data")
+            .unwrap();
 
         // Cancel the upload
         transfer.cancel_upload(&dest_path).unwrap();
@@ -701,10 +742,9 @@ mod tests {
 
         // Verify against known SHA-256 hash
         let expected: [u8; 32] = [
-            0xdf, 0xfd, 0x60, 0x21, 0xbb, 0x2b, 0xd5, 0xb0,
-            0xaf, 0x67, 0x62, 0x90, 0x80, 0x9e, 0xc3, 0xa5,
-            0x31, 0x91, 0xdd, 0x81, 0xc7, 0xf7, 0x0a, 0x4b,
-            0x28, 0x68, 0x8a, 0x36, 0x21, 0x82, 0x98, 0x6f,
+            0xdf, 0xfd, 0x60, 0x21, 0xbb, 0x2b, 0xd5, 0xb0, 0xaf, 0x67, 0x62, 0x90, 0x80, 0x9e,
+            0xc3, 0xa5, 0x31, 0x91, 0xdd, 0x81, 0xc7, 0xf7, 0x0a, 0x4b, 0x28, 0x68, 0x8a, 0x36,
+            0x21, 0x82, 0x98, 0x6f,
         ];
         assert_eq!(hash, expected);
     }

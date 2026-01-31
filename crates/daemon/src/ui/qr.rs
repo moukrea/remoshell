@@ -68,7 +68,9 @@ fn from_base58(s: &str) -> Result<Vec<u8>, &'static str> {
     // Decode
     let mut result: Vec<u8> = Vec::new();
     for c in s.chars() {
-        let idx = ALPHABET.iter().position(|&b| b == c as u8)
+        let idx = ALPHABET
+            .iter()
+            .position(|&b| b == c as u8)
             .ok_or("Invalid base58 character")?;
 
         let mut carry = idx as u32;
@@ -262,10 +264,10 @@ pub fn generate_terminal_qr(info: &PairingInfo) -> anyhow::Result<String> {
             //
             // Using inverted colors for better visibility on most terminals:
             let ch = match (top_dark, bottom_dark) {
-                (true, true) => '\u{2588}',   // Full block (both dark)
-                (true, false) => '\u{2580}',  // Upper half block
-                (false, true) => '\u{2584}',  // Lower half block
-                (false, false) => ' ',        // Space (both light)
+                (true, true) => '\u{2588}',  // Full block (both dark)
+                (true, false) => '\u{2580}', // Upper half block
+                (false, true) => '\u{2584}', // Lower half block
+                (false, false) => ' ',       // Space (both light)
             };
             output.push(ch);
         }
@@ -383,7 +385,7 @@ pub fn generate_png_qr(info: &PairingInfo, path: &Path) -> anyhow::Result<()> {
         let col = (idx % qr_width) as u32;
 
         let pixel_color = if *color == qrcode::Color::Dark {
-            Luma([0u8])   // Black
+            Luma([0u8]) // Black
         } else {
             Luma([255u8]) // White
         };
@@ -486,11 +488,8 @@ mod tests {
     #[test]
     fn test_pairing_info_from_identity() {
         let identity = protocol::DeviceIdentity::generate();
-        let info = PairingInfo::from_identity(
-            &identity,
-            "wss://relay.example.com".to_string(),
-            Some(60),
-        );
+        let info =
+            PairingInfo::from_identity(&identity, "wss://relay.example.com".to_string(), Some(60));
 
         assert_eq!(info.device_id, to_base58(identity.device_id().as_bytes()));
         assert_eq!(info.public_key, BASE64.encode(&identity.public_key_bytes()));
@@ -721,8 +720,8 @@ mod tests {
     #[test]
     fn test_public_key_base64_encoding() {
         let public_key: [u8; 32] = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
         ];
 
         let info = PairingInfo::new(
@@ -733,21 +732,24 @@ mod tests {
         );
 
         // Decode the base64 and verify it matches
-        let decoded = BASE64.decode(&info.public_key).expect("Failed to decode base64");
-        assert_eq!(decoded, public_key, "Decoded public key should match original");
+        let decoded = BASE64
+            .decode(&info.public_key)
+            .expect("Failed to decode base64");
+        assert_eq!(
+            decoded, public_key,
+            "Decoded public key should match original"
+        );
     }
 
     #[test]
     fn test_device_id_base58_from_identity() {
         let identity = protocol::DeviceIdentity::generate();
-        let info = PairingInfo::from_identity(
-            &identity,
-            "wss://relay.example.com".to_string(),
-            None,
-        );
+        let info =
+            PairingInfo::from_identity(&identity, "wss://relay.example.com".to_string(), None);
 
         // Verify the device ID can be parsed back from base58
-        let device_id_bytes = info.device_id_bytes()
+        let device_id_bytes = info
+            .device_id_bytes()
             .expect("Failed to parse device ID from base58");
         assert_eq!(&device_id_bytes[..], identity.device_id().as_bytes());
     }
@@ -765,7 +767,11 @@ mod tests {
         let json = info.to_json().expect("Failed to serialize");
 
         // The JSON should be reasonable size for QR encoding
-        assert!(json.len() < 500, "JSON content should fit in a QR code: {} bytes", json.len());
+        assert!(
+            json.len() < 500,
+            "JSON content should fit in a QR code: {} bytes",
+            json.len()
+        );
 
         // Should be able to generate both types of QR
         let terminal_qr = generate_terminal_qr(&info);

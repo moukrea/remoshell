@@ -198,9 +198,8 @@ impl Config {
 
     /// Parse configuration from a TOML string.
     pub fn from_toml(toml_str: &str) -> Result<Self> {
-        toml::from_str(toml_str).map_err(|e| {
-            anyhow::anyhow!("Invalid TOML configuration: {}", format_toml_error(&e))
-        })
+        toml::from_str(toml_str)
+            .map_err(|e| anyhow::anyhow!("Invalid TOML configuration: {}", format_toml_error(&e)))
     }
 
     /// Save configuration to a file.
@@ -445,7 +444,11 @@ max_sessions = "not a number"
     #[test]
     fn test_save_creates_directories() {
         let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("nested").join("dirs").join("config.toml");
+        let config_path = temp_dir
+            .path()
+            .join("nested")
+            .join("dirs")
+            .join("config.toml");
 
         let config = Config::default();
         config.save(&config_path).unwrap();

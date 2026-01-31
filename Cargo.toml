@@ -5,6 +5,9 @@ members = [
     "crates/daemon",
     "crates/tauri-client",
 ]
+exclude = [
+    "client/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -88,7 +88,9 @@ pub use config::Config;
 pub use devices::{TrustLevel, TrustStore, TrustedDevice};
 
 // Re-export session types for convenience
-pub use session::{Session, SessionError, SessionId, SessionManager, SessionManagerImpl, SessionStatus};
+pub use session::{
+    Session, SessionError, SessionId, SessionManager, SessionManagerImpl, SessionStatus,
+};
 
 // Re-export network types for convenience
 pub use network::{
@@ -97,7 +99,9 @@ pub use network::{
 };
 
 // Re-export files types for convenience
-pub use files::{DevicePermissions, DirectoryBrowser, DirectoryEntry, FileTransfer, PathPermissions};
+pub use files::{
+    DevicePermissions, DirectoryBrowser, DirectoryEntry, FileTransfer, PathPermissions,
+};
 
 // Re-export router types for convenience
 pub use router::{MessageRouter, RouterError, RouterResult};

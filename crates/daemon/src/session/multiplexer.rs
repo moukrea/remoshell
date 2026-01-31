@@ -234,7 +234,8 @@ impl SessionOutputBroadcaster {
     /// Returns the number of clients that successfully received the data.
     pub async fn broadcast(&self, data: Vec<u8>) -> usize {
         // Update activity timestamp
-        self.last_activity.store(Self::now_millis(), Ordering::Relaxed);
+        self.last_activity
+            .store(Self::now_millis(), Ordering::Relaxed);
 
         let mut clients = self.clients.write().await;
         let mut disconnected = Vec::new();
@@ -471,7 +472,10 @@ mod tests {
         assert_eq!(received3, data);
 
         // Check stats
-        let stats1 = broadcaster.client_stats(&"client-1".to_string()).await.unwrap();
+        let stats1 = broadcaster
+            .client_stats(&"client-1".to_string())
+            .await
+            .unwrap();
         assert_eq!(stats1.messages_sent, 1);
         assert_eq!(stats1.messages_dropped, 0);
     }
@@ -489,18 +493,29 @@ mod tests {
         // Fast client consumes immediately, slow client doesn't
         // Broadcast more messages than the slow client can buffer
         for i in 0..10 {
-            broadcaster.broadcast(format!("message-{}", i).into_bytes()).await;
+            broadcaster
+                .broadcast(format!("message-{}", i).into_bytes())
+                .await;
 
             // Fast client always consumes
             let _ = rx_fast.recv().await;
         }
 
         // Check slow client stats - should have dropped some messages
-        let stats = broadcaster.client_stats(&"slow-client".to_string()).await.unwrap();
-        assert!(stats.messages_dropped > 0, "Slow client should have dropped messages");
+        let stats = broadcaster
+            .client_stats(&"slow-client".to_string())
+            .await
+            .unwrap();
+        assert!(
+            stats.messages_dropped > 0,
+            "Slow client should have dropped messages"
+        );
 
         // Fast client should have received all
-        let fast_stats = broadcaster.client_stats(&"fast-client".to_string()).await.unwrap();
+        let fast_stats = broadcaster
+            .client_stats(&"fast-client".to_string())
+            .await
+            .unwrap();
         assert_eq!(fast_stats.messages_sent, 10);
         assert_eq!(fast_stats.messages_dropped, 0);
     }
@@ -515,7 +530,11 @@ mod tests {
             .await;
 
         // Should not be backpressured initially
-        assert!(!broadcaster.is_client_backpressured(&"client".to_string()).await);
+        assert!(
+            !broadcaster
+                .is_client_backpressured(&"client".to_string())
+                .await
+        );
 
         // Fill the buffer
         broadcaster.broadcast(b"msg1".to_vec()).await;
@@ -523,7 +542,11 @@ mod tests {
         broadcaster.broadcast(b"msg3".to_vec()).await;
 
         // Should now be backpressured
-        assert!(broadcaster.is_client_backpressured(&"client".to_string()).await);
+        assert!(
+            broadcaster
+                .is_client_backpressured(&"client".to_string())
+                .await
+        );
     }
 
     #[tokio::test]
@@ -663,7 +686,9 @@ mod tests {
 
         // Send multiple messages in order
         for i in 0..10 {
-            broadcaster.broadcast(format!("msg-{}", i).into_bytes()).await;
+            broadcaster
+                .broadcast(format!("msg-{}", i).into_bytes())
+                .await;
         }
 
         // Receive and verify order
@@ -673,7 +698,11 @@ mod tests {
                 .expect("timeout")
                 .expect("no data");
             let expected = format!("msg-{}", i).into_bytes();
-            assert_eq!(received, expected, "Message order not preserved at index {}", i);
+            assert_eq!(
+                received, expected,
+                "Message order not preserved at index {}",
+                i
+            );
         }
     }
 
@@ -684,8 +713,12 @@ mod tests {
 
         // Set up multiple clients with different capacities
         let mut rx1 = broadcaster.add_client("client-1".to_string()).await;
-        let mut rx2 = broadcaster.add_client_with_capacity("client-2".to_string(), 50).await;
-        let mut rx3 = broadcaster.add_client_with_capacity("client-3".to_string(), 100).await;
+        let mut rx2 = broadcaster
+            .add_client_with_capacity("client-2".to_string(), 50)
+            .await;
+        let mut rx3 = broadcaster
+            .add_client_with_capacity("client-3".to_string(), 100)
+            .await;
 
         // Simulate PTY output by broadcasting multiple chunks
         let messages: Vec<Vec<u8>> = (0..20)
@@ -718,9 +751,18 @@ mod tests {
         }
 
         // All stats should show no drops
-        let stats1 = broadcaster.client_stats(&"client-1".to_string()).await.unwrap();
-        let stats2 = broadcaster.client_stats(&"client-2".to_string()).await.unwrap();
-        let stats3 = broadcaster.client_stats(&"client-3".to_string()).await.unwrap();
+        let stats1 = broadcaster
+            .client_stats(&"client-1".to_string())
+            .await
+            .unwrap();
+        let stats2 = broadcaster
+            .client_stats(&"client-2".to_string())
+            .await
+            .unwrap();
+        let stats3 = broadcaster
+            .client_stats(&"client-3".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(stats1.messages_sent, 20);
         assert_eq!(stats1.messages_dropped, 0);

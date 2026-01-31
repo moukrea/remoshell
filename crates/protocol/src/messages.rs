@@ -494,19 +494,25 @@ mod tests {
 
     #[test]
     fn test_envelope_version() {
-        let envelope = Envelope::new(1, Message::Ping(Ping {
-            timestamp: 12345,
-            payload: vec![],
-        }));
+        let envelope = Envelope::new(
+            1,
+            Message::Ping(Ping {
+                timestamp: 12345,
+                payload: vec![],
+            }),
+        );
         assert_eq!(envelope.version, PROTOCOL_VERSION);
     }
 
     #[test]
     fn test_envelope_sequence() {
-        let envelope = Envelope::new(999, Message::Ping(Ping {
-            timestamp: 0,
-            payload: vec![],
-        }));
+        let envelope = Envelope::new(
+            999,
+            Message::Ping(Ping {
+                timestamp: 0,
+                payload: vec![],
+            }),
+        );
         assert_eq!(envelope.sequence, 999);
     }
 
@@ -783,7 +789,11 @@ mod tests {
     fn test_capabilities_custom_roundtrip() {
         roundtrip_envelope(Message::Capabilities(Capabilities {
             protocol_versions: vec![1, 2],
-            features: vec!["shell".to_string(), "files".to_string(), "tunnels".to_string()],
+            features: vec![
+                "shell".to_string(),
+                "files".to_string(),
+                "tunnels".to_string(),
+            ],
             max_message_size: 2 * 1024 * 1024,
             max_sessions: 32,
             compression: vec!["lz4".to_string(), "zstd".to_string()],
@@ -821,27 +831,41 @@ mod tests {
 
     #[test]
     fn test_typical_message_size() {
-        let envelope = Envelope::new(1, Message::SessionData(SessionData {
-            session_id: "sess-12345678".to_string(),
-            stream: DataStream::Stdout,
-            data: b"Hello, World!\n".to_vec(),
-        }));
+        let envelope = Envelope::new(
+            1,
+            Message::SessionData(SessionData {
+                session_id: "sess-12345678".to_string(),
+                stream: DataStream::Stdout,
+                data: b"Hello, World!\n".to_vec(),
+            }),
+        );
 
         let bytes = envelope.to_msgpack().unwrap();
         // Typical messages should be well under 1KB
-        assert!(bytes.len() < 1024, "Message too large: {} bytes", bytes.len());
+        assert!(
+            bytes.len() < 1024,
+            "Message too large: {} bytes",
+            bytes.len()
+        );
     }
 
     #[test]
     fn test_ping_message_compact() {
-        let envelope = Envelope::new(1, Message::Ping(Ping {
-            timestamp: u64::MAX,
-            payload: vec![],
-        }));
+        let envelope = Envelope::new(
+            1,
+            Message::Ping(Ping {
+                timestamp: u64::MAX,
+                payload: vec![],
+            }),
+        );
 
         let bytes = envelope.to_msgpack().unwrap();
         // Ping should be very compact, under 100 bytes
-        assert!(bytes.len() < 100, "Ping message too large: {} bytes", bytes.len());
+        assert!(
+            bytes.len() < 100,
+            "Ping message too large: {} bytes",
+            bytes.len()
+        );
     }
 
     #[test]
@@ -849,7 +873,11 @@ mod tests {
         let envelope = Envelope::new(1, Message::SessionCreate(SessionCreate::default()));
         let bytes = envelope.to_msgpack().unwrap();
         // Default session create should be under 100 bytes
-        assert!(bytes.len() < 100, "SessionCreate too large: {} bytes", bytes.len());
+        assert!(
+            bytes.len() < 100,
+            "SessionCreate too large: {} bytes",
+            bytes.len()
+        );
     }
 
     // Edge case tests

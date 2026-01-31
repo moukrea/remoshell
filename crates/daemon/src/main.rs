@@ -122,9 +122,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize tracing
     let filter = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     tracing::info!("RemoShell daemon starting...");
 
@@ -213,7 +211,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Pair { format, output, relay_url, expiry } => {
+        Commands::Pair {
+            format,
+            output,
+            relay_url,
+            expiry,
+        } => {
             tracing::info!("Generating pairing code with format: {:?}", format);
 
             // Load or generate device identity
@@ -248,7 +251,10 @@ async fn main() -> anyhow::Result<()> {
                             println!("\nScan this QR code to pair:\n");
                             println!("{}", qr);
                             println!("Device ID: {}", pairing_info.device_id);
-                            println!("Expires in: {} seconds", pairing_info.seconds_until_expiry());
+                            println!(
+                                "Expires in: {} seconds",
+                                pairing_info.seconds_until_expiry()
+                            );
                         }
                         Err(e) => {
                             tracing::error!("Failed to generate QR code: {}", e);
@@ -264,7 +270,10 @@ async fn main() -> anyhow::Result<()> {
                         Ok(()) => {
                             println!("QR code saved to: {}", output_path.display());
                             println!("Device ID: {}", pairing_info.device_id);
-                            println!("Expires in: {} seconds", pairing_info.seconds_until_expiry());
+                            println!(
+                                "Expires in: {} seconds",
+                                pairing_info.seconds_until_expiry()
+                            );
                         }
                         Err(e) => {
                             tracing::error!("Failed to generate QR code: {}", e);
@@ -539,7 +548,12 @@ mod tests {
     fn test_pair_default_format() {
         let cli = Cli::try_parse_from(["remoshell", "pair"]).unwrap();
         match cli.command {
-            Commands::Pair { format, output, relay_url, expiry } => {
+            Commands::Pair {
+                format,
+                output,
+                relay_url,
+                expiry,
+            } => {
                 assert_eq!(format, PairFormat::Terminal);
                 assert!(output.is_none());
                 assert_eq!(relay_url, "wss://signaling.remoshell.io");
@@ -584,7 +598,9 @@ mod tests {
 
     #[test]
     fn test_pair_with_output() {
-        let cli = Cli::try_parse_from(["remoshell", "pair", "-f", "png", "--output", "/tmp/qr.png"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["remoshell", "pair", "-f", "png", "--output", "/tmp/qr.png"])
+                .unwrap();
         match cli.command {
             Commands::Pair { format, output, .. } => {
                 assert_eq!(format, PairFormat::Png);
@@ -596,7 +612,9 @@ mod tests {
 
     #[test]
     fn test_pair_with_relay_url() {
-        let cli = Cli::try_parse_from(["remoshell", "pair", "--relay-url", "wss://custom.relay.io"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["remoshell", "pair", "--relay-url", "wss://custom.relay.io"])
+                .unwrap();
         match cli.command {
             Commands::Pair { relay_url, .. } => {
                 assert_eq!(relay_url, "wss://custom.relay.io");
@@ -637,15 +655,15 @@ mod tests {
 
     #[test]
     fn test_global_short_config_flag() {
-        let cli = Cli::try_parse_from(["remoshell", "-c", "/path/to/config.toml", "status"])
-            .unwrap();
+        let cli =
+            Cli::try_parse_from(["remoshell", "-c", "/path/to/config.toml", "status"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("/path/to/config.toml")));
     }
 
     #[test]
     fn test_config_path_resolves() {
-        let cli = Cli::try_parse_from(["remoshell", "-c", "./relative/path.toml", "status"])
-            .unwrap();
+        let cli =
+            Cli::try_parse_from(["remoshell", "-c", "./relative/path.toml", "status"]).unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("./relative/path.toml")));
     }
 
