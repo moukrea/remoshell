@@ -1,0 +1,29 @@
+# Cargo configuration for RemoShell
+
+[build]
+# Use all available CPU cores for compilation
+jobs = -1
+
+[target.x86_64-unknown-linux-gnu]
+# Linux-specific linker settings (optional)
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-apple-darwin]
+# macOS x86_64 settings
+
+[target.aarch64-apple-darwin]
+# macOS ARM64 settings
+
+[target.x86_64-pc-windows-msvc]
+# Windows settings
+
+[alias]
+# Useful aliases
+b = "build"
+c = "check"
+t = "test"
+r = "run"
+
+[env]
+# Environment variables for builds
+RUST_BACKTRACE = "1"

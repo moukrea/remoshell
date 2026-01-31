@@ -1,0 +1,31 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "RemoShell protocol definitions and cryptographic primitives"
+
+[dependencies]
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_bytes.workspace = true
+rmp-serde.workspace = true
+
+# Cryptography
+snow.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+rand.workspace = true
+
+# Compression
+lz4_flex.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

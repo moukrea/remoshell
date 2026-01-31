@@ -1,0 +1,38 @@
+# Rust
+target/
+*.rs.bk
+
+# Node.js
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# Tauri
+client/src-tauri/gen/
+
+# Cloudflare Workers
+.wrangler/
+
+# Build artifacts
+artifacts/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Claude Code / Tasks
+.claude/
+.tasks/

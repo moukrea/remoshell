@@ -1,0 +1,40 @@
+[workspace]
+
+[package]
+name = "remoshell-app"
+version = "0.1.0"
+description = "RemoShell - Remote Shell Access Application"
+authors = ["RemoShell Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/remoshell/remoshell"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri core
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
+
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

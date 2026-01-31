@@ -1,0 +1,51 @@
+[package]
+name = "tauri-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "RemoShell Tauri client - cross-platform GUI application"
+
+[dependencies]
+# Internal crates
+protocol.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# Networking
+iroh.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Cryptography
+rand.workspace = true
+
+# Database
+rusqlite.workspace = true
+
+# Keychain / Secure Storage
+keyring.workspace = true
+base64.workspace = true
+
+# Tauri
+tauri.workspace = true
+
+[features]
+default = []
+notification = []
+
+[dev-dependencies]
+tempfile.workspace = true
+rand.workspace = true
