@@ -4,6 +4,7 @@ import UnoCSS from 'unocss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  base: process.env.BASE_URL || '/',
   plugins: [
     UnoCSS(),
     solid(),
