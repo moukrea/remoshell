@@ -7,7 +7,6 @@ import {
   DEFAULT_KEEP_ALIVE_INTERVAL,
   DEFAULT_MAX_QUEUED_NOTIFICATIONS,
   type LifecycleEvent,
-  type LifecycleEventSubscriber,
 } from './AppLifecycle';
 
 // Mock TauriIPCBridge
@@ -263,7 +262,7 @@ describe('AppLifecycle', () => {
     });
 
     it('should queue notifications with icon', () => {
-      const id = lifecycle.queueNotification('Title', 'Body', 'icon.png');
+      lifecycle.queueNotification('Title', 'Body', 'icon.png');
 
       expect(lifecycle.getQueuedNotifications()[0].icon).toBe('icon.png');
     });

@@ -7,7 +7,6 @@ import {
   formatPermissions,
   type FileStore,
   type FileEntry,
-  type FilePermissions,
 } from './files';
 
 describe('File Store', () => {

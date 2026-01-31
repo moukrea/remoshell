@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Test the OfflineIndicator component logic independently
 
@@ -223,10 +223,9 @@ describe('OfflineIndicator', () => {
 
     it('should keep dismissed state until next event', () => {
       let showBanner = true;
-      let wasOffline = true;
 
       const dismiss = () => { showBanner = false; };
-      const onOffline = () => { showBanner = true; wasOffline = true; };
+      const onOffline = () => { showBanner = true; };
 
       dismiss();
       expect(showBanner).toBe(false);

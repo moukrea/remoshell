@@ -237,7 +237,8 @@ describe('Device Store', () => {
         platform: 'windows',
       });
 
-      const originalLastSeen = store.getDevice('device-1')?.lastSeen;
+      // Store initial lastSeen (unused but documents test setup)
+      void store.getDevice('device-1')?.lastSeen;
 
       // Small delay to ensure time difference
       const before = Date.now();

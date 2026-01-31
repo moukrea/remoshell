@@ -1,6 +1,5 @@
 import { Component, Show, For, createMemo } from 'solid-js';
 import {
-  type Device,
   type ConnectionHistoryEntry,
   type DevicePlatform,
   getDeviceStore,

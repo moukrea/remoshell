@@ -1,7 +1,6 @@
 import { Component, For, Show, createSignal, createMemo } from 'solid-js';
 import {
   type Device,
-  type DeviceStatus,
   type DevicePlatform,
   getDeviceStore,
 } from '../../stores/devices';

@@ -1,19 +1,18 @@
-import { defineConfig, mergeConfig } from 'vitest/config';
-import viteConfig from './vite.config';
+import { defineConfig } from 'vitest/config';
+import solid from 'vite-plugin-solid';
 
-export default mergeConfig(
-  viteConfig,
-  defineConfig({
-    test: {
-      environment: 'jsdom',
-      globals: true,
-      deps: {
-        optimizer: {
-          web: {
-            include: ['solid-js'],
-          },
+export default defineConfig({
+  // @ts-expect-error - vite version mismatch between vitest and vite-plugin-solid
+  plugins: [solid()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    deps: {
+      optimizer: {
+        web: {
+          include: ['solid-js'],
         },
       },
     },
-  })
-);
+  },
+});

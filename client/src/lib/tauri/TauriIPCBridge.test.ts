@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   TauriIPCBridge,
   getTauriIPCBridge,
@@ -7,7 +7,6 @@ import {
   TauriCommandError,
   uint8ArrayToBase64,
   base64ToUint8Array,
-  type ConnectionEvent,
   type PairedDevice,
 } from './TauriIPCBridge';
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   BarcodeScanner,
   getBarcodeScanner,
@@ -11,7 +11,6 @@ import {
   decodeBase58,
   encodeBase58,
   type PairingData,
-  type ScannerPlatform,
 } from './BarcodeScanner';
 
 // Mock the WebCameraScanner module
@@ -36,7 +35,7 @@ vi.mock('./WebCameraScanner', () => {
   };
 });
 
-import { WebCameraScanner } from './WebCameraScanner';
+// WebCameraScanner is mocked above
 
 // ============================================================================
 // Test Helpers
@@ -519,7 +518,7 @@ describe('BarcodeScanner', () => {
       );
 
       scanner = new BarcodeScanner();
-      const scan1 = scanner.scan();
+      scanner.scan(); // Start first scan (don't await)
 
       await expect(scanner.scan()).rejects.toThrow('Scanner is already active');
 
@@ -531,7 +530,7 @@ describe('BarcodeScanner', () => {
   describe('Stop and Cancel', () => {
     it('should stop web scanner', () => {
       scanner = new BarcodeScanner();
-      const webScanner = scanner.getWebScanner();
+      scanner.getWebScanner(); // Initialize web scanner
 
       scanner.stop();
 
@@ -606,7 +605,7 @@ describe('BarcodeScanner', () => {
   describe('Destroy', () => {
     it('should clean up resources on destroy', () => {
       scanner = new BarcodeScanner();
-      const webScanner = scanner.getWebScanner();
+      scanner.getWebScanner(); // Initialize web scanner
 
       scanner.destroy();
 

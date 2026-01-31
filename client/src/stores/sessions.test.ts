@@ -175,7 +175,7 @@ describe('Session Store', () => {
 
   describe('Set Active Session', () => {
     it('should set active session', () => {
-      const sessionId1 = store.createSession({ peerId: 'peer-1' });
+      store.createSession({ peerId: 'peer-1' }); // session 1
       const sessionId2 = store.createSession({ peerId: 'peer-1' });
 
       store.setActiveSession(sessionId2);

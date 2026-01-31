@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, createMemo, createEffect, onCleanup } from 'solid-js';
+import { Component, For, Show, createSignal, createMemo } from 'solid-js';
 import {
   type FileEntry,
   type FileStore,
