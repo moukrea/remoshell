@@ -83,7 +83,7 @@ impl Signature {
     }
 
     /// Converts to ed25519_dalek Signature.
-    fn to_ed25519(&self) -> Ed25519Signature {
+    fn as_ed25519(&self) -> Ed25519Signature {
         Ed25519Signature::from_bytes(&self.0)
     }
 }
@@ -181,7 +181,7 @@ impl DeviceIdentity {
     ///
     /// Returns `Ok(())` if the signature is valid, or an error if verification fails.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
-        let sig = signature.to_ed25519();
+        let sig = signature.as_ed25519();
         self.verifying_key
             .verify(message, &sig)
             .map_err(ProtocolError::from)
@@ -250,7 +250,7 @@ impl PeerIdentity {
     ///
     /// Returns `Ok(())` if the signature is valid, or an error if verification fails.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
-        let sig = signature.to_ed25519();
+        let sig = signature.as_ed25519();
         self.verifying_key
             .verify(message, &sig)
             .map_err(ProtocolError::from)

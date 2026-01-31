@@ -165,7 +165,7 @@ impl NoiseSession {
         // Hash the Ed25519 secret key to derive an X25519 private key
         // This is a standard conversion technique
         let secret = identity.secret_key_bytes();
-        let hash = Sha256::digest(&secret);
+        let hash = Sha256::digest(secret);
 
         let mut x25519_private = [0u8; 32];
         x25519_private.copy_from_slice(&hash);
