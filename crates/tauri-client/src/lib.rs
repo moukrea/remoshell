@@ -85,14 +85,40 @@ pub use commands::{AppState, CommandError, CommandResult};
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ClientConfig {
     /// Server address to connect to.
+    ///
+    /// Can be overridden with the `REMOSHELL_SERVER_ADDRESS` environment variable.
+    /// Falls back to `localhost:9000` if the env var is not set or is empty.
     pub server_address: String,
+}
+
+impl ClientConfig {
+    /// Create a new ClientConfig with default values.
+    ///
+    /// The server address can be configured via:
+    /// - `REMOSHELL_SERVER_ADDRESS` environment variable
+    /// - Falls back to `localhost:9000` if not set or empty
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create config with explicit server address.
+    ///
+    /// Useful for testing or when the address is known at compile time.
+    pub fn with_server_address(address: impl Into<String>) -> Self {
+        Self {
+            server_address: address.into(),
+        }
+    }
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
-        Self {
-            server_address: "localhost:9000".to_string(),
-        }
+        let server_address = std::env::var("REMOSHELL_SERVER_ADDRESS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "localhost:9000".to_string());
+
+        Self { server_address }
     }
 }
 
@@ -153,4 +179,69 @@ pub mod command_list {
         get_paired_devices, has_device_keys, initialize_app, remove_paired_device, send_quic_data,
         show_native_notification, store_paired_device, update_device_last_seen,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::sync::Mutex;
+
+    // Mutex to ensure tests that modify env vars don't run concurrently
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_client_config_default_fallback() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+
+        // Remove env var if set to test fallback behavior
+        env::remove_var("REMOSHELL_SERVER_ADDRESS");
+
+        let config = ClientConfig::default();
+        assert_eq!(config.server_address, "localhost:9000");
+    }
+
+    #[test]
+    fn test_client_config_env_override() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+
+        env::set_var("REMOSHELL_SERVER_ADDRESS", "192.168.1.100:8080");
+
+        let config = ClientConfig::default();
+        assert_eq!(config.server_address, "192.168.1.100:8080");
+
+        // Clean up
+        env::remove_var("REMOSHELL_SERVER_ADDRESS");
+    }
+
+    #[test]
+    fn test_client_config_empty_env_falls_back() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+
+        // Set empty env var - should fall back to default
+        env::set_var("REMOSHELL_SERVER_ADDRESS", "");
+
+        let config = ClientConfig::default();
+        assert_eq!(config.server_address, "localhost:9000");
+
+        // Clean up
+        env::remove_var("REMOSHELL_SERVER_ADDRESS");
+    }
+
+    #[test]
+    fn test_client_config_with_server_address() {
+        let config = ClientConfig::with_server_address("custom:1234");
+        assert_eq!(config.server_address, "custom:1234");
+    }
+
+    #[test]
+    fn test_client_config_new() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+
+        // Ensure env var is not set
+        env::remove_var("REMOSHELL_SERVER_ADDRESS");
+
+        let config = ClientConfig::new();
+        assert_eq!(config.server_address, "localhost:9000");
+    }
 }
