@@ -43,8 +43,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     // Load or create configuration
-//!     let config = Config::load_or_default()?;
+//!     // Load configuration from default path (or use defaults if not found)
+//!     let config = Config::load_default()?;
 //!
 //!     // Create and start the orchestrator
 //!     let mut orchestrator = DaemonOrchestrator::new(config)?;
