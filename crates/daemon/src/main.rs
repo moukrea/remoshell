@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daemon::config::Config;
+use daemon::ipc::{get_daemon_pid, is_daemon_running};
 use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
 use daemon::ui::qr::{generate_png_qr, generate_terminal_qr, PairingInfo};
 
@@ -145,6 +146,19 @@ async fn main() -> anyhow::Result<()> {
         Commands::Start { tui, systemd } => {
             if tui && systemd {
                 anyhow::bail!("Cannot use both --tui and --systemd flags");
+            }
+
+            // Check for existing daemon BEFORE starting
+            if is_daemon_running() {
+                let pid = get_daemon_pid().unwrap_or(0);
+                eprintln!("Error: Daemon already running (PID: {})", pid);
+                eprintln!();
+                eprintln!("To stop the existing daemon, run:");
+                eprintln!("  remoshell-daemon stop");
+                eprintln!();
+                eprintln!("To check daemon status, run:");
+                eprintln!("  remoshell-daemon status");
+                std::process::exit(1);
             }
 
             // Create the orchestrator
