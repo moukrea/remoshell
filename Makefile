@@ -215,3 +215,42 @@ build-android: build-tauri-client ## Build the Android app
 	@printf "$(YELLOW)Building Android app...$(NC)\n"
 	cd $(ROOT_DIR)/client && npm run tauri android build
 	@printf "$(GREEN)Android app built$(NC)\n"
+
+# =============================================================================
+# Development / Run Targets
+# =============================================================================
+
+.PHONY: dev-daemon dev-daemon-headless dev-client dev-signaling dev-desktop
+.PHONY: dev-stack dev-tmux pair-local
+
+dev-daemon: ## Run daemon with TUI interface
+	cargo run -p daemon
+
+dev-daemon-headless: ## Run daemon without TUI (headless mode)
+	cargo run -p daemon -- --headless
+
+dev-client: ## Run web client dev server (Vite)
+	cd $(ROOT_DIR)/client && npm run dev
+
+dev-signaling: ## Run signaling worker locally (wrangler)
+	cd $(ROOT_DIR)/signaling && npx wrangler dev
+
+dev-desktop: ## Run Tauri desktop app in dev mode
+	cd $(ROOT_DIR)/client && npm run tauri dev
+
+dev-stack: ## Run all services in parallel (background processes)
+	@printf "$(YELLOW)Starting development stack...$(NC)\n"
+	@$(MAKE) dev-signaling & \
+	$(MAKE) dev-client & \
+	$(MAKE) dev-daemon
+	@printf "$(GREEN)Stack running. Press Ctrl+C to stop.$(NC)\n"
+
+dev-tmux: ## Run services in tmux session
+	@tmux new-session -d -s remoshell 'make dev-signaling' \; \
+		split-window -h 'make dev-client' \; \
+		split-window -v 'make dev-daemon' \; \
+		select-pane -t 0 \; \
+		attach
+
+pair-local: ## Generate local pairing QR code
+	cargo run -p daemon -- pair --local
