@@ -41,9 +41,6 @@
         "bundleMediaFramework": true
       }
     },
-    "macos": {
-      "minimumSystemVersion": "10.15"
-    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
@@ -51,9 +48,6 @@
     },
     "android": {
       "minSdkVersion": 24
-    },
-    "ios": {
-      "developmentTeam": ""
     }
   },
   "plugins": {

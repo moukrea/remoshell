@@ -81,9 +81,9 @@ pub struct DaemonOrchestrator {
     /// Trust store for device management.
     trust_store: Arc<TrustStore>,
     /// Directory browser for file listing.
-    directory_browser: Arc<DirectoryBrowser>,
+    _directory_browser: Arc<DirectoryBrowser>,
     /// File transfer handler.
-    file_transfer: Arc<FileTransfer>,
+    _file_transfer: Arc<FileTransfer>,
     /// Message router.
     router: Arc<MessageRouter<SessionManagerImpl>>,
     /// Signaling client.
@@ -148,8 +148,8 @@ impl DaemonOrchestrator {
             state: Arc::new(RwLock::new(OrchestratorState::Stopped)),
             session_manager,
             trust_store,
-            directory_browser,
-            file_transfer,
+            _directory_browser: directory_browser,
+            _file_transfer: file_transfer,
             router,
             signaling_client: None,
             connections: Arc::new(RwLock::new(std::collections::HashMap::new())),

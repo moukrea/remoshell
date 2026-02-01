@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Main configuration structure for the RemoShell daemon.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct Config {
     /// General daemon configuration.
@@ -82,18 +82,6 @@ pub struct SecurityConfig {
 
     /// Timeout in seconds for approval requests (0 = no timeout).
     pub approval_timeout: u64,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            daemon: DaemonConfig::default(),
-            network: NetworkConfig::default(),
-            session: SessionConfig::default(),
-            file: FileConfig::default(),
-            security: SecurityConfig::default(),
-        }
-    }
 }
 
 impl Default for DaemonConfig {

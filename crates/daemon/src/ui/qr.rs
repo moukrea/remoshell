@@ -44,7 +44,7 @@ fn to_base58(bytes: &[u8]) -> String {
     }
 
     // Add leading '1's for each leading zero byte
-    result.extend(std::iter::repeat(b'1').take(leading_zeros));
+    result.extend(std::iter::repeat_n(b'1', leading_zeros));
 
     result.reverse();
     String::from_utf8(result).unwrap()
