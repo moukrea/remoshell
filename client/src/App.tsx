@@ -5,6 +5,7 @@ import { getConnectionStore, type ConnectionEvent } from './stores/connection';
 import { getSessionStore, type SessionEvent } from './stores/sessions';
 import { getDeviceStore, type DeviceEvent } from './stores/devices';
 import { getFileStore, type FileEvent, type FileEntry } from './stores/files';
+import { getNotificationStore } from './stores/notifications';
 import { OfflineIndicator } from './components/offline';
 import { ToastContainer } from './components/notifications';
 import { getOrchestrator } from './lib/orchestration/ConnectionOrchestrator';
@@ -422,6 +423,13 @@ const App: Component = () => {
       console.log('[App] Connection orchestrator initialized');
     } catch (error) {
       console.error('[App] Initialization failed:', error);
+      const notifications = getNotificationStore();
+      notifications.show({
+        type: 'error',
+        title: 'Initialization Failed',
+        message: 'Failed to initialize the app. Some features may not work correctly.',
+        duration: 10000, // 10 seconds - longer since this is important
+      });
     }
 
     // Connection store events
