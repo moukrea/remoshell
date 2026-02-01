@@ -179,6 +179,11 @@ fn create_test_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
     let directory_browser = Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
     let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
 
+    // Register a trusted device for tests that require session operations
+    let device_id = test_device_id();
+    let device = daemon::devices::TrustedDevice::new(device_id, "Test Device".to_string(), [0u8; 32]);
+    trust_store.add_device(device).unwrap();
+
     MessageRouter::new(
         session_manager,
         file_transfer,

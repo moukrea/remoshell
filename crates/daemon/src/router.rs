@@ -110,6 +110,29 @@ impl<S: SessionManager> MessageRouter<S> {
         }
     }
 
+    /// Verifies that the device is trusted.
+    ///
+    /// Returns `Ok(())` if the device has `TrustLevel::Trusted`, otherwise
+    /// returns `Err(RouterError::Device)` with an appropriate error message.
+    fn require_trusted(&self, device_id: &DeviceId) -> Result<(), RouterError> {
+        match self.trust_store.get_device(device_id) {
+            Ok(Some(device)) => match device.trust_level {
+                TrustLevel::Trusted => Ok(()),
+                TrustLevel::Unknown => Err(RouterError::Device(
+                    "Device pending approval".to_string(),
+                )),
+                TrustLevel::Revoked => Err(RouterError::Device(
+                    "Device has been revoked".to_string(),
+                )),
+            },
+            Ok(None) => Err(RouterError::Device("Device not registered".to_string())),
+            Err(e) => Err(RouterError::Device(format!(
+                "Failed to check device trust: {}",
+                e
+            ))),
+        }
+    }
+
     /// Route a message to the appropriate handler.
     ///
     /// Returns `Ok(Some(response))` if a response should be sent back,
@@ -121,13 +144,13 @@ impl<S: SessionManager> MessageRouter<S> {
         debug!(?message, ?device_id, "Routing message");
 
         match message {
-            // Session messages
-            Message::SessionCreate(req) => self.handle_session_create(req).await,
-            Message::SessionAttach(req) => self.handle_session_attach(req).await,
+            // Session messages (require trusted device)
+            Message::SessionCreate(req) => self.handle_session_create(req, device_id).await,
+            Message::SessionAttach(req) => self.handle_session_attach(req, device_id).await,
             Message::SessionDetach(req) => self.handle_session_detach(req).await,
-            Message::SessionKill(req) => self.handle_session_kill(req).await,
+            Message::SessionKill(req) => self.handle_session_kill(req, device_id).await,
             Message::SessionResize(req) => self.handle_session_resize(req).await,
-            Message::SessionData(data) => self.handle_session_data(data).await,
+            Message::SessionData(data) => self.handle_session_data(data, device_id).await,
             Message::SessionCreated(_) | Message::SessionClosed(_) => {
                 // These are response messages, not requests - ignore them
                 debug!("Ignoring response message received as request");
@@ -179,7 +202,14 @@ impl<S: SessionManager> MessageRouter<S> {
     // Session Handlers
     // =========================================================================
 
-    async fn handle_session_create(&self, req: SessionCreate) -> RouterResult {
+    async fn handle_session_create(
+        &self,
+        req: SessionCreate,
+        device_id: &DeviceId,
+    ) -> RouterResult {
+        // Verify device is trusted before creating session
+        self.require_trusted(device_id)?;
+
         info!(
             cols = req.cols,
             rows = req.rows,
@@ -200,7 +230,14 @@ impl<S: SessionManager> MessageRouter<S> {
         })))
     }
 
-    async fn handle_session_attach(&self, req: SessionAttach) -> RouterResult {
+    async fn handle_session_attach(
+        &self,
+        req: SessionAttach,
+        device_id: &DeviceId,
+    ) -> RouterResult {
+        // Verify device is trusted before attaching to session
+        self.require_trusted(device_id)?;
+
         info!(session_id = %req.session_id, "Attaching to session");
 
         let session_id: SessionId = req.session_id.clone();
@@ -220,7 +257,10 @@ impl<S: SessionManager> MessageRouter<S> {
         Ok(None)
     }
 
-    async fn handle_session_kill(&self, req: SessionKill) -> RouterResult {
+    async fn handle_session_kill(&self, req: SessionKill, device_id: &DeviceId) -> RouterResult {
+        // Verify device is trusted before killing session
+        self.require_trusted(device_id)?;
+
         info!(
             session_id = %req.session_id,
             signal = ?req.signal,
@@ -262,7 +302,10 @@ impl<S: SessionManager> MessageRouter<S> {
         Ok(None)
     }
 
-    async fn handle_session_data(&self, data: SessionData) -> RouterResult {
+    async fn handle_session_data(&self, data: SessionData, device_id: &DeviceId) -> RouterResult {
+        // Verify device is trusted before sending session data
+        self.require_trusted(device_id)?;
+
         // Only handle stdin data (client -> daemon)
         if data.stream != DataStream::Stdin {
             return Err(RouterError::InvalidRequest(
@@ -646,8 +689,28 @@ mod tests {
         )
     }
 
-    fn create_failing_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
-        let session_manager = Arc::new(MockSessionManager::failing());
+    /// Creates a test device ID for use in unit tests.
+    fn test_device_id() -> DeviceId {
+        DeviceId::from_bytes([0u8; 16])
+    }
+
+    /// Creates a trusted device in the trust store and returns its device ID.
+    fn create_trusted_device(trust_store: &TrustStore) -> DeviceId {
+        let device_id = test_device_id();
+        let device = crate::devices::TrustedDevice::new(
+            device_id,
+            "Test Device".to_string(),
+            [0u8; 32],
+        );
+        trust_store.add_device(device).unwrap();
+        device_id
+    }
+
+    /// Creates a router with a trusted device already registered.
+    fn create_test_router_with_trusted_device(
+        temp_dir: &TempDir,
+    ) -> (MessageRouter<MockSessionManager>, DeviceId) {
+        let session_manager = Arc::new(MockSessionManager::new());
         let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
         let file_transfer = Arc::new(
             FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
@@ -657,17 +720,16 @@ mod tests {
             Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
 
-        MessageRouter::new(
+        // Register a trusted device
+        let device_id = create_trusted_device(&trust_store);
+
+        let router = MessageRouter::new(
             session_manager,
             file_transfer,
             directory_browser,
             trust_store,
-        )
-    }
-
-    /// Creates a test device ID for use in unit tests.
-    fn test_device_id() -> DeviceId {
-        DeviceId::from_bytes([0u8; 16])
+        );
+        (router, device_id)
     }
 
     // =========================================================================
@@ -677,7 +739,7 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_create() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionCreate(SessionCreate {
             cols: 80,
@@ -687,7 +749,7 @@ mod tests {
             cwd: None,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
@@ -705,24 +767,115 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_create_failure() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_failing_router(&temp_dir);
+        // Create a router with a failing session manager but trusted device
+        let session_manager = Arc::new(MockSessionManager::failing());
+        let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+        let file_transfer = Arc::new(
+            FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+                .with_temp_dir(temp_dir.path().join("tmp")),
+        );
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let device_id = create_trusted_device(&trust_store);
+        let router = MessageRouter::new(
+            session_manager,
+            file_transfer,
+            directory_browser,
+            trust_store,
+        );
 
         let msg = Message::SessionCreate(SessionCreate::default());
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_route_session_create_untrusted_device_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let router = create_test_router(&temp_dir);
+
+        // Use an unregistered device ID
+        let untrusted_device = DeviceId::from_bytes([1u8; 16]);
+
+        let msg = Message::SessionCreate(SessionCreate {
+            cols: 80,
+            rows: 24,
+            shell: Some("/bin/bash".to_string()),
+            env: vec![],
+            cwd: None,
+        });
+
+        let result = router.route(msg, &untrusted_device).await;
+        assert!(result.is_err());
+
+        match result {
+            Err(RouterError::Device(msg)) => {
+                assert!(msg.contains("not registered"), "Expected 'not registered' error, got: {}", msg);
+            }
+            _ => panic!("Expected RouterError::Device"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_session_create_pending_device_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_manager = Arc::new(MockSessionManager::new());
+        let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+        let file_transfer = Arc::new(
+            FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+                .with_temp_dir(temp_dir.path().join("tmp")),
+        );
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+
+        // Register a device with Unknown trust level (pending)
+        let device_id = DeviceId::from_bytes([2u8; 16]);
+        let device = crate::devices::TrustedDevice::new_unknown(
+            device_id,
+            "Pending Device".to_string(),
+            [0u8; 32],
+        );
+        trust_store.add_device(device).unwrap();
+
+        let router = MessageRouter::new(
+            session_manager,
+            file_transfer,
+            directory_browser,
+            trust_store,
+        );
+
+        let msg = Message::SessionCreate(SessionCreate {
+            cols: 80,
+            rows: 24,
+            shell: None,
+            env: vec![],
+            cwd: None,
+        });
+
+        let result = router.route(msg, &device_id).await;
+        assert!(result.is_err());
+
+        match result {
+            Err(RouterError::Device(msg)) => {
+                assert!(msg.contains("pending"), "Expected 'pending' error, got: {}", msg);
+            }
+            _ => panic!("Expected RouterError::Device"),
+        }
     }
 
     #[tokio::test]
     async fn test_route_session_attach() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionAttach(SessionAttach {
             session_id: "test-session".to_string(),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none()); // No direct response
     }
@@ -730,13 +883,13 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_detach() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionDetach(SessionDetach {
             session_id: "test-session".to_string(),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -744,14 +897,14 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_kill() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionKill(SessionKill {
             session_id: "test-session".to_string(),
             signal: Some(9),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -766,7 +919,7 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_resize() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionResize(SessionResize {
             session_id: "test-session".to_string(),
@@ -774,7 +927,7 @@ mod tests {
             rows: 40,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -782,7 +935,7 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_data_stdin() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionData(SessionData {
             session_id: "test-session".to_string(),
@@ -790,7 +943,7 @@ mod tests {
             data: b"hello".to_vec(),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -798,7 +951,7 @@ mod tests {
     #[tokio::test]
     async fn test_route_session_data_stdout_rejected() {
         let temp_dir = TempDir::new().unwrap();
-        let router = create_test_router(&temp_dir);
+        let (router, device_id) = create_test_router_with_trusted_device(&temp_dir);
 
         let msg = Message::SessionData(SessionData {
             session_id: "test-session".to_string(),
@@ -806,7 +959,7 @@ mod tests {
             data: b"hello".to_vec(),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &device_id).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::InvalidRequest(_))));
     }
