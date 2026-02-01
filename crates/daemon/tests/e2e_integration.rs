@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use daemon::config::Config;
 use daemon::devices::TrustStore;
-use daemon::files::{DirectoryBrowser, FileTransfer};
+use daemon::files::{DirectoryBrowser, FileTransfer, PathPermissions};
 use daemon::orchestrator::{DaemonOrchestrator, OrchestratorState};
 use daemon::router::MessageRouter;
 use daemon::session::{SessionManager, SessionManagerImpl};
@@ -178,17 +178,26 @@ fn create_test_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
     );
     let directory_browser = Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
     let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+    let path_permissions = Arc::new(PathPermissions::new(
+        temp_dir.path().join("permissions.json"),
+        vec![temp_dir.path().to_path_buf()],
+    ));
 
     // Register a trusted device for tests that require session operations
     let device_id = test_device_id();
     let device = daemon::devices::TrustedDevice::new(device_id, "Test Device".to_string(), [0u8; 32]);
     trust_store.add_device(device).unwrap();
 
+    // Set up permissions for the test device (allow all within temp_dir)
+    let device_perms = daemon::files::DevicePermissions::allow_all(device_id);
+    path_permissions.set_device_permissions(device_perms).unwrap();
+
     MessageRouter::new(
         session_manager,
         file_transfer,
         directory_browser,
         trust_store,
+        path_permissions,
     )
 }
 

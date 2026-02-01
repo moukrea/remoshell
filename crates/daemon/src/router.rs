@@ -19,7 +19,7 @@ use protocol::DeviceId;
 use tracing::{debug, error, info, warn};
 
 use crate::devices::{TrustLevel, TrustStore};
-use crate::files::{DirectoryBrowser, FileTransfer};
+use crate::files::{DirectoryBrowser, FileTransfer, PathPermissions};
 use crate::session::{SessionError, SessionId, SessionManager, SessionStatus};
 
 /// Result type for router operations.
@@ -47,6 +47,10 @@ pub enum RouterError {
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// Permission denied error.
+    #[error("permission denied: {0}")]
+    Permission(String),
 }
 
 impl RouterError {
@@ -65,6 +69,7 @@ impl RouterError {
             },
             RouterError::File(_) => (ErrorCode::InternalError, true),
             RouterError::Device(_) => (ErrorCode::Unauthorized, false),
+            RouterError::Permission(_) => (ErrorCode::Unauthorized, false),
             RouterError::InvalidRequest(_) => (ErrorCode::InvalidRequest, false),
             RouterError::Internal(_) => (ErrorCode::InternalError, true),
         };
@@ -83,6 +88,19 @@ impl RouterError {
 /// The router holds references to the session manager, file transfer handler,
 /// and device trust store. It receives incoming messages and routes them to
 /// the appropriate handler based on message type.
+/// File operation types for permission checking.
+#[derive(Debug, Clone, Copy)]
+pub enum FileOperation {
+    /// Read file or list directory.
+    Read,
+    /// List directory contents.
+    List,
+    /// Write or create file.
+    Write,
+    /// Delete file or directory.
+    Delete,
+}
+
 pub struct MessageRouter<S: SessionManager> {
     /// Session manager for PTY operations.
     session_manager: Arc<S>,
@@ -92,6 +110,8 @@ pub struct MessageRouter<S: SessionManager> {
     directory_browser: Arc<DirectoryBrowser>,
     /// Trust store for device management.
     trust_store: Arc<TrustStore>,
+    /// Path permissions for device file access control.
+    path_permissions: Arc<PathPermissions>,
 }
 
 impl<S: SessionManager> MessageRouter<S> {
@@ -101,12 +121,62 @@ impl<S: SessionManager> MessageRouter<S> {
         file_transfer: Arc<FileTransfer>,
         directory_browser: Arc<DirectoryBrowser>,
         trust_store: Arc<TrustStore>,
+        path_permissions: Arc<PathPermissions>,
     ) -> Self {
         Self {
             session_manager,
             file_transfer,
             directory_browser,
             trust_store,
+            path_permissions,
+        }
+    }
+
+    /// Checks if the device has permission for a file operation on the given path.
+    ///
+    /// Returns `Ok(())` if the operation is allowed, otherwise returns
+    /// `Err(RouterError::Permission)` with an appropriate error message.
+    fn check_file_permission(
+        &self,
+        device_id: &DeviceId,
+        path: &Path,
+        operation: FileOperation,
+    ) -> Result<(), RouterError> {
+        let allowed = match operation {
+            FileOperation::Read | FileOperation::List => {
+                self.path_permissions.can_device_read(device_id, path)
+            }
+            FileOperation::Write => self.path_permissions.can_device_write(device_id, path),
+            FileOperation::Delete => self.path_permissions.can_device_delete(device_id, path),
+        };
+
+        match allowed {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                warn!(
+                    device_id = ?device_id,
+                    path = %path.display(),
+                    operation = ?operation,
+                    "Permission denied for file operation"
+                );
+                Err(RouterError::Permission(format!(
+                    "Device {} not permitted to {:?} path: {}",
+                    device_id, operation, path.display()
+                )))
+            }
+            Err(e) => {
+                error!(
+                    device_id = ?device_id,
+                    path = %path.display(),
+                    operation = ?operation,
+                    error = %e,
+                    "Failed to check file permission"
+                );
+                Err(RouterError::Internal(format!(
+                    "Failed to check file permission: {}",
+                    e
+                )))
+            }
         }
     }
 
@@ -157,12 +227,14 @@ impl<S: SessionManager> MessageRouter<S> {
                 Ok(None)
             }
 
-            // File messages
-            Message::FileListRequest(req) => self.handle_file_list(req).await,
-            Message::FileDownloadRequest(req) => self.handle_file_download(req).await,
-            Message::FileUploadStart(req) => self.handle_file_upload_start(req).await,
-            Message::FileUploadChunk(req) => self.handle_file_upload_chunk(req).await,
-            Message::FileUploadComplete(req) => self.handle_file_upload_complete(req).await,
+            // File messages (require permission checks)
+            Message::FileListRequest(req) => self.handle_file_list(req, device_id).await,
+            Message::FileDownloadRequest(req) => self.handle_file_download(req, device_id).await,
+            Message::FileUploadStart(req) => self.handle_file_upload_start(req, device_id).await,
+            Message::FileUploadChunk(req) => self.handle_file_upload_chunk(req, device_id).await,
+            Message::FileUploadComplete(req) => {
+                self.handle_file_upload_complete(req, device_id).await
+            }
             Message::FileListResponse(_) | Message::FileDownloadChunk(_) => {
                 // These are response messages, not requests - ignore them
                 debug!("Ignoring response message received as request");
@@ -323,10 +395,18 @@ impl<S: SessionManager> MessageRouter<S> {
     // File Handlers
     // =========================================================================
 
-    async fn handle_file_list(&self, req: FileListRequest) -> RouterResult {
+    async fn handle_file_list(
+        &self,
+        req: FileListRequest,
+        device_id: &DeviceId,
+    ) -> RouterResult {
         debug!(path = %req.path, include_hidden = req.include_hidden, "Listing directory");
 
         let path = Path::new(&req.path);
+
+        // Check permission before listing directory
+        self.check_file_permission(device_id, path, FileOperation::List)?;
+
         let entries = self
             .directory_browser
             .list_directory(path, req.include_hidden)
@@ -340,7 +420,11 @@ impl<S: SessionManager> MessageRouter<S> {
         })))
     }
 
-    async fn handle_file_download(&self, req: FileDownloadRequest) -> RouterResult {
+    async fn handle_file_download(
+        &self,
+        req: FileDownloadRequest,
+        device_id: &DeviceId,
+    ) -> RouterResult {
         debug!(
             path = %req.path,
             offset = req.offset,
@@ -349,6 +433,10 @@ impl<S: SessionManager> MessageRouter<S> {
         );
 
         let path = Path::new(&req.path);
+
+        // Check permission before downloading file
+        self.check_file_permission(device_id, path, FileOperation::Read)?;
+
         let (data, total_size, is_last) = self
             .file_transfer
             .download_chunk(path, req.offset, req.chunk_size)
@@ -363,7 +451,11 @@ impl<S: SessionManager> MessageRouter<S> {
         })))
     }
 
-    async fn handle_file_upload_start(&self, req: FileUploadStart) -> RouterResult {
+    async fn handle_file_upload_start(
+        &self,
+        req: FileUploadStart,
+        device_id: &DeviceId,
+    ) -> RouterResult {
         debug!(
             path = %req.path,
             size = req.size,
@@ -373,6 +465,10 @@ impl<S: SessionManager> MessageRouter<S> {
         );
 
         let path = Path::new(&req.path);
+
+        // Check permission before starting upload
+        self.check_file_permission(device_id, path, FileOperation::Write)?;
+
         self.file_transfer
             .start_upload(path, req.size, req.mode, req.overwrite)
             .map_err(|e| RouterError::File(e.to_string()))?;
@@ -381,7 +477,11 @@ impl<S: SessionManager> MessageRouter<S> {
         Ok(None)
     }
 
-    async fn handle_file_upload_chunk(&self, req: FileUploadChunk) -> RouterResult {
+    async fn handle_file_upload_chunk(
+        &self,
+        req: FileUploadChunk,
+        device_id: &DeviceId,
+    ) -> RouterResult {
         debug!(
             path = %req.path,
             offset = req.offset,
@@ -390,6 +490,10 @@ impl<S: SessionManager> MessageRouter<S> {
         );
 
         let path = Path::new(&req.path);
+
+        // Check permission before writing chunk
+        self.check_file_permission(device_id, path, FileOperation::Write)?;
+
         self.file_transfer
             .write_chunk(path, req.offset, &req.data)
             .map_err(|e| RouterError::File(e.to_string()))?;
@@ -398,10 +502,18 @@ impl<S: SessionManager> MessageRouter<S> {
         Ok(None)
     }
 
-    async fn handle_file_upload_complete(&self, req: FileUploadComplete) -> RouterResult {
+    async fn handle_file_upload_complete(
+        &self,
+        req: FileUploadComplete,
+        device_id: &DeviceId,
+    ) -> RouterResult {
         debug!(path = %req.path, "Completing file upload");
 
         let path = Path::new(&req.path);
+
+        // Check permission before completing upload
+        self.check_file_permission(device_id, path, FileOperation::Write)?;
+
         self.file_transfer
             .complete_upload(path, &req.checksum)
             .map_err(|e| RouterError::File(e.to_string()))?;
@@ -680,12 +792,22 @@ mod tests {
         let directory_browser =
             Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
+
+        // Set up default permissions for test device (allow all within temp_dir)
+        let device_id = test_device_id();
+        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        path_permissions.set_device_permissions(device_perms).unwrap();
 
         MessageRouter::new(
             session_manager,
             file_transfer,
             directory_browser,
             trust_store,
+            path_permissions,
         )
     }
 
@@ -719,15 +841,24 @@ mod tests {
         let directory_browser =
             Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
 
         // Register a trusted device
         let device_id = create_trusted_device(&trust_store);
+
+        // Set up default permissions for trusted device (allow all within temp_dir)
+        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        path_permissions.set_device_permissions(device_perms).unwrap();
 
         let router = MessageRouter::new(
             session_manager,
             file_transfer,
             directory_browser,
             trust_store,
+            path_permissions,
         );
         (router, device_id)
     }
@@ -777,12 +908,22 @@ mod tests {
         let directory_browser =
             Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
         let device_id = create_trusted_device(&trust_store);
+
+        // Set up permissions for the device
+        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        path_permissions.set_device_permissions(device_perms).unwrap();
+
         let router = MessageRouter::new(
             session_manager,
             file_transfer,
             directory_browser,
             trust_store,
+            path_permissions,
         );
 
         let msg = Message::SessionCreate(SessionCreate::default());
@@ -830,6 +971,10 @@ mod tests {
         let directory_browser =
             Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
         let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
 
         // Register a device with Unknown trust level (pending)
         let device_id = DeviceId::from_bytes([2u8; 16]);
@@ -840,11 +985,16 @@ mod tests {
         );
         trust_store.add_device(device).unwrap();
 
+        // Set up permissions for the device
+        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        path_permissions.set_device_permissions(device_perms).unwrap();
+
         let router = MessageRouter::new(
             session_manager,
             file_transfer,
             directory_browser,
             trust_store,
+            path_permissions,
         );
 
         let msg = Message::SessionCreate(SessionCreate {
@@ -1257,10 +1407,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_list_invalid_path() {
+    async fn test_file_list_path_outside_allowed() {
         let temp_dir = TempDir::new().unwrap();
         let router = create_test_router(&temp_dir);
 
+        // Path outside allowed paths returns Permission error
         let msg = Message::FileListRequest(FileListRequest {
             path: "/nonexistent/path/that/does/not/exist".to_string(),
             include_hidden: false,
@@ -1268,6 +1419,223 @@ mod tests {
 
         let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_err());
+        // Permission check happens first, before filesystem access
+        assert!(matches!(result, Err(RouterError::Permission(_))));
+    }
+
+    #[tokio::test]
+    async fn test_file_list_nonexistent_path_within_allowed() {
+        let temp_dir = TempDir::new().unwrap();
+        let router = create_test_router(&temp_dir);
+
+        // Path inside allowed directory but doesn't exist
+        let nonexistent = temp_dir.path().join("nonexistent_subdir");
+        let msg = Message::FileListRequest(FileListRequest {
+            path: nonexistent.to_string_lossy().to_string(),
+            include_hidden: false,
+        });
+
+        let result = router.route(msg, &test_device_id()).await;
+        assert!(result.is_err());
+        // File error because the path is allowed but doesn't exist
         assert!(matches!(result, Err(RouterError::File(_))));
+    }
+
+    // =========================================================================
+    // Permission Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_file_list_permission_denied() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_manager = Arc::new(MockSessionManager::new());
+        let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+        let file_transfer = Arc::new(
+            FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+                .with_temp_dir(temp_dir.path().join("tmp")),
+        );
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
+
+        // Create a device with NO permissions (default is None)
+        let device_id = DeviceId::from_bytes([3u8; 16]);
+        let device_perms = crate::files::DevicePermissions::new(device_id);
+        path_permissions.set_device_permissions(device_perms).unwrap();
+
+        let router = MessageRouter::new(
+            session_manager,
+            file_transfer,
+            directory_browser,
+            trust_store,
+            path_permissions,
+        );
+
+        // Create a test directory
+        std::fs::create_dir(temp_dir.path().join("test_dir")).unwrap();
+
+        let msg = Message::FileListRequest(FileListRequest {
+            path: temp_dir.path().join("test_dir").to_string_lossy().to_string(),
+            include_hidden: false,
+        });
+
+        let result = router.route(msg, &device_id).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(RouterError::Permission(_))));
+    }
+
+    #[tokio::test]
+    async fn test_file_download_permission_denied() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_manager = Arc::new(MockSessionManager::new());
+        let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+        let file_transfer = Arc::new(
+            FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+                .with_temp_dir(temp_dir.path().join("tmp")),
+        );
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
+
+        // Create a device with NO permissions
+        let device_id = DeviceId::from_bytes([4u8; 16]);
+        let device_perms = crate::files::DevicePermissions::new(device_id);
+        path_permissions.set_device_permissions(device_perms).unwrap();
+
+        let router = MessageRouter::new(
+            session_manager,
+            file_transfer,
+            directory_browser,
+            trust_store,
+            path_permissions,
+        );
+
+        // Create a test file
+        let test_file = temp_dir.path().join("test.txt");
+        std::fs::write(&test_file, "test content").unwrap();
+
+        let msg = Message::FileDownloadRequest(FileDownloadRequest {
+            path: test_file.to_string_lossy().to_string(),
+            offset: 0,
+            chunk_size: 1024,
+        });
+
+        let result = router.route(msg, &device_id).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(RouterError::Permission(_))));
+    }
+
+    #[tokio::test]
+    async fn test_file_upload_permission_denied() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_manager = Arc::new(MockSessionManager::new());
+        let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+        let file_transfer = Arc::new(
+            FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+                .with_temp_dir(temp_dir.path().join("tmp")),
+        );
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
+
+        // Create a device with read-only permissions
+        let device_id = DeviceId::from_bytes([5u8; 16]);
+        let mut device_perms = crate::files::DevicePermissions::new(device_id);
+        device_perms.add_path(crate::files::permissions::PathPermission::read_only(
+            temp_dir.path().to_path_buf(),
+        ));
+        path_permissions.set_device_permissions(device_perms).unwrap();
+
+        let router = MessageRouter::new(
+            session_manager,
+            file_transfer,
+            directory_browser,
+            trust_store,
+            path_permissions,
+        );
+
+        let dest_path = temp_dir.path().join("upload.txt");
+
+        let msg = Message::FileUploadStart(FileUploadStart {
+            path: dest_path.to_string_lossy().to_string(),
+            size: 12,
+            mode: 0o644,
+            overwrite: false,
+        });
+
+        let result = router.route(msg, &device_id).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(RouterError::Permission(_))));
+    }
+
+    #[tokio::test]
+    async fn test_file_operations_with_proper_permissions() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_manager = Arc::new(MockSessionManager::new());
+        let browser_for_transfer = DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+        let file_transfer = Arc::new(
+            FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+                .with_temp_dir(temp_dir.path().join("tmp")),
+        );
+        let directory_browser =
+            Arc::new(DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+        let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+        let path_permissions = Arc::new(PathPermissions::new(
+            temp_dir.path().join("permissions.json"),
+            vec![temp_dir.path().to_path_buf()],
+        ));
+
+        // Create a device with read-write permissions
+        let device_id = DeviceId::from_bytes([6u8; 16]);
+        let mut device_perms = crate::files::DevicePermissions::new(device_id);
+        device_perms.add_path(crate::files::permissions::PathPermission::read_write(
+            temp_dir.path().to_path_buf(),
+        ));
+        path_permissions.set_device_permissions(device_perms).unwrap();
+
+        let router = MessageRouter::new(
+            session_manager,
+            file_transfer,
+            directory_browser,
+            trust_store,
+            path_permissions,
+        );
+
+        // Create a test file
+        let test_file = temp_dir.path().join("readable.txt");
+        std::fs::write(&test_file, "test content").unwrap();
+
+        // Test read operation succeeds
+        let msg = Message::FileDownloadRequest(FileDownloadRequest {
+            path: test_file.to_string_lossy().to_string(),
+            offset: 0,
+            chunk_size: 1024,
+        });
+
+        let result = router.route(msg, &device_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Test list operation succeeds
+        let msg = Message::FileListRequest(FileListRequest {
+            path: temp_dir.path().to_string_lossy().to_string(),
+            include_hidden: false,
+        });
+
+        let result = router.route(msg, &device_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
     }
 }

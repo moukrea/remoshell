@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::ipc::{get_socket_path, IpcRequest, IpcResponse, IpcServer, IpcSessionInfo};
 use crate::devices::TrustStore;
-use crate::files::{DirectoryBrowser, FileTransfer};
+use crate::files::{DirectoryBrowser, FileTransfer, PathPermissions};
 use crate::network::{
     signaling::{
         ConnectionState, SignalingClient, SignalingConfig, SignalingEvent, WebSocketSignalingClient,
@@ -131,11 +131,16 @@ impl DaemonOrchestrator {
         let directory_browser = Arc::new(DirectoryBrowser::new(allowed_paths.clone()));
 
         // Initialize file transfer handler
-        let browser_for_transfer = DirectoryBrowser::new(allowed_paths);
+        let browser_for_transfer = DirectoryBrowser::new(allowed_paths.clone());
         let file_transfer = Arc::new(
             FileTransfer::new(browser_for_transfer, config.file.max_size)
                 .with_temp_dir(config.daemon.data_dir.join("tmp")),
         );
+
+        // Initialize path permissions
+        let permissions_path = config.daemon.data_dir.join("permissions.json");
+        let path_permissions = Arc::new(PathPermissions::new(permissions_path, allowed_paths));
+        path_permissions.load().context("Failed to load path permissions")?;
 
         // Initialize message router
         let router = Arc::new(MessageRouter::new(
@@ -143,6 +148,7 @@ impl DaemonOrchestrator {
             Arc::clone(&file_transfer),
             Arc::clone(&directory_browser),
             Arc::clone(&trust_store),
+            Arc::clone(&path_permissions),
         ));
 
         let (event_tx, _) = broadcast::channel(256);
