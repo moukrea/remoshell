@@ -223,6 +223,7 @@ mod tests {
                 running: true,
                 uptime_secs: 100,
                 session_count: 2,
+                device_count: 1,
             })
             .await
             .unwrap();
@@ -238,10 +239,12 @@ mod tests {
                 running,
                 uptime_secs,
                 session_count,
+                device_count,
             } => {
                 assert!(running);
                 assert_eq!(uptime_secs, 100);
                 assert_eq!(session_count, 2);
+                assert_eq!(device_count, 1);
             }
             _ => panic!("Expected Status response"),
         }

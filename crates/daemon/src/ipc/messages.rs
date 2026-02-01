@@ -36,6 +36,8 @@ pub enum IpcResponse {
         uptime_secs: u64,
         /// Number of active sessions.
         session_count: usize,
+        /// Number of connected devices.
+        device_count: usize,
     },
     /// Acknowledgment that the daemon is stopping.
     Stopping,
@@ -140,6 +142,7 @@ mod tests {
             running: true,
             uptime_secs: 3600,
             session_count: 2,
+            device_count: 3,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("Status"));

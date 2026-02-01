@@ -251,6 +251,7 @@ impl DaemonOrchestrator {
         let session_manager_for_ipc = Arc::clone(&self.session_manager);
         let start_time_for_ipc = self.start_time;
         let shutdown_token_for_ipc = self.shutdown_token.clone();
+        let connections_for_ipc = Arc::clone(&self.connections);
 
         tokio::spawn(async move {
             Self::handle_ipc_requests(
@@ -258,6 +259,7 @@ impl DaemonOrchestrator {
                 session_manager_for_ipc,
                 start_time_for_ipc,
                 shutdown_token_for_ipc,
+                connections_for_ipc,
                 ipc_shutdown_rx,
             )
             .await;
@@ -658,6 +660,7 @@ impl DaemonOrchestrator {
         session_manager: Arc<SessionManagerImpl>,
         start_time: Option<Instant>,
         shutdown_token: CancellationToken,
+        connections: Arc<RwLock<std::collections::HashMap<String, ActiveConnection>>>,
         mut shutdown_rx: oneshot::Receiver<()>,
     ) {
         loop {
@@ -671,6 +674,7 @@ impl DaemonOrchestrator {
                         Ok(mut conn) => {
                             let session_manager = Arc::clone(&session_manager);
                             let shutdown_token = shutdown_token.clone();
+                            let connections = Arc::clone(&connections);
                             tokio::spawn(async move {
                                 while let Ok(Some(request)) = conn.read_request().await {
                                     let response = Self::handle_ipc_request(
@@ -678,6 +682,7 @@ impl DaemonOrchestrator {
                                         &session_manager,
                                         start_time,
                                         &shutdown_token,
+                                        &connections,
                                     )
                                     .await;
                                     if conn.send_response(&response).await.is_err() {
@@ -705,6 +710,7 @@ impl DaemonOrchestrator {
         session_manager: &Arc<SessionManagerImpl>,
         start_time: Option<Instant>,
         shutdown_token: &CancellationToken,
+        connections: &Arc<RwLock<std::collections::HashMap<String, ActiveConnection>>>,
     ) -> IpcResponse {
         match request {
             IpcRequest::Ping => IpcResponse::Pong,
@@ -713,10 +719,12 @@ impl DaemonOrchestrator {
                     .map(|t| t.elapsed().as_secs())
                     .unwrap_or(0);
                 let session_count = session_manager.count();
+                let device_count = connections.read().await.len();
                 IpcResponse::Status {
                     running: true,
                     uptime_secs,
                     session_count,
+                    device_count,
                 }
             }
             IpcRequest::Stop => {

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use daemon::config::Config;
-use daemon::ipc::{get_daemon_pid, is_daemon_running};
+use daemon::ipc::{get_daemon_pid, get_socket_path, is_daemon_running, IpcClient, IpcResponse};
 use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
 use daemon::ui::qr::{generate_png_qr, generate_terminal_qr, PairingInfo};
 
@@ -183,8 +183,20 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Status => {
             tracing::info!("Checking daemon status");
-            // Query running daemon status via IPC
-            println!("Status command not yet implemented");
+
+            match query_daemon_status().await {
+                Ok(status) => {
+                    println!("Daemon Status: {}", if status.running { "running" } else { "stopped" });
+                    println!("  Uptime:   {}", format_duration(status.uptime_secs));
+                    println!("  Sessions: {}", status.session_count);
+                    println!("  Devices:  {}", status.device_count);
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Daemon is not running: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Devices(cmd) => {
             let trust_store = daemon::TrustStore::with_default_path();
@@ -325,6 +337,65 @@ fn parse_device_id(fingerprint: &str) -> anyhow::Result<protocol::DeviceId> {
     let mut arr = [0u8; 16];
     arr.copy_from_slice(&bytes);
     Ok(protocol::DeviceId::from_bytes(arr))
+}
+
+/// Status information returned from the daemon.
+struct DaemonStatus {
+    running: bool,
+    uptime_secs: u64,
+    session_count: usize,
+    device_count: usize,
+}
+
+/// Query the daemon status via IPC.
+async fn query_daemon_status() -> anyhow::Result<DaemonStatus> {
+    use std::time::Duration;
+
+    let socket_path = get_socket_path();
+
+    // Connect with timeout
+    let mut client = IpcClient::connect_with_timeout(&socket_path, Duration::from_secs(5))
+        .await
+        .map_err(|e| anyhow::anyhow!("Cannot connect to daemon: {}", e))?;
+
+    // Send status request
+    let response = client
+        .status()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query status: {}", e))?;
+
+    match response {
+        IpcResponse::Status {
+            running,
+            uptime_secs,
+            session_count,
+            device_count,
+        } => Ok(DaemonStatus {
+            running,
+            uptime_secs,
+            session_count,
+            device_count,
+        }),
+        IpcResponse::Error { message } => {
+            anyhow::bail!("Daemon returned error: {}", message)
+        }
+        _ => anyhow::bail!("Unexpected response from daemon"),
+    }
+}
+
+/// Format a duration in seconds to human-readable format.
+fn format_duration(secs: u64) -> String {
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+
+    if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
 }
 
 /// Run the daemon in headless mode.
