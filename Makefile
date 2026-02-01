@@ -254,3 +254,70 @@ dev-tmux: ## Run services in tmux session
 
 pair-local: ## Generate local pairing QR code
 	cargo run -p daemon -- pair --local
+
+# =============================================================================
+# Test Targets
+# =============================================================================
+
+.PHONY: test test-all test-rust test-protocol test-daemon test-tauri-client
+.PHONY: test-client test-signaling test-client-watch test-signaling-watch
+.PHONY: ci-local bench
+
+test: test-rust test-client test-signaling ## Run all tests (Rust + Frontend + Signaling)
+	@printf "$(GREEN)All tests complete$(NC)\n"
+
+test-all: test ## Alias for test
+
+test-rust: ## Run all Rust workspace tests
+	@printf "$(YELLOW)Running Rust tests...$(NC)\n"
+	cargo test --workspace
+	@printf "$(GREEN)Rust tests passed$(NC)\n"
+
+test-protocol: ## Run protocol crate tests
+	@printf "$(YELLOW)Running protocol tests...$(NC)\n"
+	cargo test -p protocol
+	@printf "$(GREEN)Protocol tests passed$(NC)\n"
+
+test-daemon: ## Run daemon crate tests
+	@printf "$(YELLOW)Running daemon tests...$(NC)\n"
+	cargo test -p daemon
+	@printf "$(GREEN)Daemon tests passed$(NC)\n"
+
+test-tauri-client: ## Run tauri-client crate tests
+	@printf "$(YELLOW)Running tauri-client tests...$(NC)\n"
+	cargo test -p tauri-client
+	@printf "$(GREEN)Tauri-client tests passed$(NC)\n"
+
+test-client: ## Run frontend tests
+	@printf "$(YELLOW)Running frontend tests...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm test
+	@printf "$(GREEN)Frontend tests passed$(NC)\n"
+
+test-signaling: ## Run signaling worker tests
+	@printf "$(YELLOW)Running signaling tests...$(NC)\n"
+	cd $(ROOT_DIR)/signaling && npm test
+	@printf "$(GREEN)Signaling tests passed$(NC)\n"
+
+test-client-watch: ## Run frontend tests in watch mode
+	cd $(ROOT_DIR)/client && npm test -- --watch
+
+test-signaling-watch: ## Run signaling tests in watch mode
+	cd $(ROOT_DIR)/signaling && npm test -- --watch
+
+ci-local: ## Run full CI pipeline locally (format, lint, test)
+	@printf "$(BOLD)=== Checking Rust formatting ===$(NC)\n"
+	cargo fmt --all -- --check
+	@printf "$(BOLD)=== Running Clippy ===$(NC)\n"
+	cargo clippy --workspace -- -D warnings
+	@printf "$(BOLD)=== Running Rust tests ===$(NC)\n"
+	cargo test --workspace
+	@printf "$(BOLD)=== Checking TypeScript ===$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run typecheck
+	@printf "$(BOLD)=== Running frontend tests ===$(NC)\n"
+	cd $(ROOT_DIR)/client && npm test
+	@printf "$(GREEN)=== CI checks passed ===$(NC)\n"
+
+bench: ## Run Rust benchmarks
+	@printf "$(YELLOW)Running benchmarks...$(NC)\n"
+	cargo bench --workspace
+	@printf "$(GREEN)Benchmarks complete$(NC)\n"
