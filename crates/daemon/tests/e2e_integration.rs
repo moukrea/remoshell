@@ -57,7 +57,7 @@ async fn test_orchestrator_state_starts_stopped() {
 async fn test_orchestrator_stop_when_already_stopped() {
     let (config, _temp_dir) = create_test_config();
 
-    let orchestrator = DaemonOrchestrator::new(config).unwrap();
+    let mut orchestrator = DaemonOrchestrator::new(config).unwrap();
 
     // Stop should succeed even when already stopped
     let result = orchestrator.stop().await;

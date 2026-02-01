@@ -4,17 +4,18 @@
 //! all daemon subsystems: session management, device trust, message routing,
 //! network handlers (WebRTC/QUIC), and signaling.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use protocol::crypto::DeviceIdentity;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
+use crate::ipc::{get_socket_path, IpcRequest, IpcResponse, IpcServer, IpcSessionInfo};
 use crate::devices::TrustStore;
 use crate::files::{DirectoryBrowser, FileTransfer};
 use crate::network::{
@@ -94,6 +95,10 @@ pub struct DaemonOrchestrator {
     shutdown_token: CancellationToken,
     /// Event sender.
     event_tx: broadcast::Sender<OrchestratorEvent>,
+    /// Start time for uptime tracking.
+    start_time: Option<Instant>,
+    /// IPC server shutdown sender.
+    ipc_shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl DaemonOrchestrator {
@@ -155,6 +160,8 @@ impl DaemonOrchestrator {
             connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
             shutdown_token: CancellationToken::new(),
             event_tx,
+            start_time: None,
+            ipc_shutdown_tx: None,
         })
     }
 
@@ -220,6 +227,41 @@ impl DaemonOrchestrator {
         self.emit_event(OrchestratorEvent::StateChanged(OrchestratorState::Starting));
 
         info!("Starting daemon orchestrator...");
+
+        // Record start time for uptime tracking
+        self.start_time = Some(Instant::now());
+
+        // Create PID file
+        let pid_file = self.get_pid_file_path();
+        self.create_pid_file(&pid_file)
+            .context("Failed to create PID file")?;
+        debug!("Created PID file at {:?}", pid_file);
+
+        // Start IPC server
+        let socket_path = get_socket_path();
+        let ipc_server = IpcServer::bind(&socket_path)
+            .await
+            .context("Failed to start IPC server")?;
+        info!("Started IPC server at {:?}", socket_path);
+
+        // Spawn IPC handler task
+        let (ipc_shutdown_tx, ipc_shutdown_rx) = oneshot::channel();
+        self.ipc_shutdown_tx = Some(ipc_shutdown_tx);
+
+        let session_manager_for_ipc = Arc::clone(&self.session_manager);
+        let start_time_for_ipc = self.start_time;
+        let shutdown_token_for_ipc = self.shutdown_token.clone();
+
+        tokio::spawn(async move {
+            Self::handle_ipc_requests(
+                ipc_server,
+                session_manager_for_ipc,
+                start_time_for_ipc,
+                shutdown_token_for_ipc,
+                ipc_shutdown_rx,
+            )
+            .await;
+        });
 
         // Start session cleanup task
         let session_manager = Arc::clone(&self.session_manager);
@@ -508,7 +550,7 @@ impl DaemonOrchestrator {
     }
 
     /// Stops the daemon orchestrator gracefully.
-    pub async fn stop(&self) -> Result<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         // Check current state
         {
             let mut state = self.state.write().await;
@@ -525,6 +567,24 @@ impl DaemonOrchestrator {
         ));
 
         info!("Stopping daemon orchestrator...");
+
+        // Signal IPC server to stop
+        if let Some(tx) = self.ipc_shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+
+        // Remove socket file
+        let socket_path = get_socket_path();
+        if let Err(e) = std::fs::remove_file(&socket_path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!("Failed to remove socket file: {}", e);
+            }
+        }
+
+        // Remove PID file
+        let pid_file = self.get_pid_file_path();
+        self.remove_pid_file(&pid_file);
+        debug!("Removed PID file");
 
         // Signal shutdown to all tasks
         self.shutdown_token.cancel();
@@ -568,6 +628,125 @@ impl DaemonOrchestrator {
 
         info!("Daemon orchestrator stopped");
         Ok(())
+    }
+
+    /// Gets the path to the PID file.
+    fn get_pid_file_path(&self) -> PathBuf {
+        self.config.daemon.data_dir.join("daemon.pid")
+    }
+
+    /// Creates the PID file with the current process ID.
+    fn create_pid_file(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, std::process::id().to_string())
+    }
+
+    /// Removes the PID file.
+    fn remove_pid_file(&self, path: &Path) {
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!("Failed to remove PID file: {}", e);
+            }
+        }
+    }
+
+    /// Handles IPC requests in a separate task.
+    async fn handle_ipc_requests(
+        server: IpcServer,
+        session_manager: Arc<SessionManagerImpl>,
+        start_time: Option<Instant>,
+        shutdown_token: CancellationToken,
+        mut shutdown_rx: oneshot::Receiver<()>,
+    ) {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    debug!("IPC server received shutdown signal");
+                    break;
+                }
+                result = server.accept() => {
+                    match result {
+                        Ok(mut conn) => {
+                            let session_manager = Arc::clone(&session_manager);
+                            let shutdown_token = shutdown_token.clone();
+                            tokio::spawn(async move {
+                                while let Ok(Some(request)) = conn.read_request().await {
+                                    let response = Self::handle_ipc_request(
+                                        &request,
+                                        &session_manager,
+                                        start_time,
+                                        &shutdown_token,
+                                    )
+                                    .await;
+                                    if conn.send_response(&response).await.is_err() {
+                                        break;
+                                    }
+                                    // If we just processed a Stop request, break the loop
+                                    if matches!(request, IpcRequest::Stop) {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            error!("Failed to accept IPC connection: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handles a single IPC request and returns the response.
+    async fn handle_ipc_request(
+        request: &IpcRequest,
+        session_manager: &Arc<SessionManagerImpl>,
+        start_time: Option<Instant>,
+        shutdown_token: &CancellationToken,
+    ) -> IpcResponse {
+        match request {
+            IpcRequest::Ping => IpcResponse::Pong,
+            IpcRequest::Status => {
+                let uptime_secs = start_time
+                    .map(|t| t.elapsed().as_secs())
+                    .unwrap_or(0);
+                let session_count = session_manager.count();
+                IpcResponse::Status {
+                    running: true,
+                    uptime_secs,
+                    session_count,
+                }
+            }
+            IpcRequest::Stop => {
+                info!("Received stop request via IPC");
+                shutdown_token.cancel();
+                IpcResponse::Stopping
+            }
+            IpcRequest::ListSessions => {
+                let sessions = session_manager
+                    .list()
+                    .into_iter()
+                    .map(|s| IpcSessionInfo {
+                        id: s.id.to_string(),
+                        connected_at: 0, // TODO: Track actual connection time
+                        peer_id: None,   // TODO: Track peer ID when available
+                    })
+                    .collect();
+                IpcResponse::Sessions { sessions }
+            }
+            IpcRequest::KillSession { session_id } => {
+                match session_manager.kill(session_id, Some(9)).await {
+                    Ok(_) => IpcResponse::SessionKilled {
+                        session_id: session_id.clone(),
+                    },
+                    Err(e) => IpcResponse::Error {
+                        message: e.to_string(),
+                    },
+                }
+            }
+        }
     }
 
     /// Emits an orchestrator event.
