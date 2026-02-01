@@ -10,7 +10,7 @@
 //! - Native notifications
 
 use crate::quic::{ChannelType, ConnectionState, QuicConfig, QuicManager};
-use crate::storage::{Database, DatabaseError, KeychainError, KeychainManager, PairedDevice};
+use crate::storage::{Database, DatabaseError, KeychainError, PairedDevice};
 use iroh::NodeAddr;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -327,6 +327,7 @@ pub fn get_device_keys() -> CommandResult<DeviceKeysResponse> {
     #[cfg(not(test))]
     {
         use crate::storage::keychain::SystemKeychain;
+        use crate::storage::KeychainManager;
         let manager = KeychainManager::new(SystemKeychain);
 
         // Check if key exists first
@@ -356,6 +357,7 @@ pub fn has_device_keys() -> CommandResult<bool> {
     #[cfg(not(test))]
     {
         use crate::storage::keychain::SystemKeychain;
+        use crate::storage::KeychainManager;
         let manager = KeychainManager::new(SystemKeychain);
         Ok(manager.has_secret_key())
     }
