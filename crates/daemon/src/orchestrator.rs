@@ -396,9 +396,13 @@ impl DaemonOrchestrator {
         handler.setup_incoming_data_channels().await;
 
         // Parse and set remote description (offer)
-        let offer =
-            webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(sdp)
-                .expect("Invalid SDP offer");
+        let offer = match webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(sdp) {
+            Ok(o) => o,
+            Err(e) => {
+                error!("Invalid SDP offer: {}", e);
+                return;
+            }
+        };
         if let Err(e) = handler.set_remote_description(offer).await {
             error!("Failed to set remote description: {}", e);
             return;
