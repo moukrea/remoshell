@@ -31,7 +31,17 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.env.docker
 .env.*.local
+
+# Configuration (local overrides)
+config/local.toml
+config/*.local.toml
+
+# Docker volumes and data
+docker-data/
+.docker-volumes/
+daemon-data/
 
 # Claude Code / Tasks
 .claude/
@@ -39,3 +49,12 @@ Thumbs.db
 keystore.b64
 remoshell.keystore
 *.keystore
+
+# Build artifacts
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+*.dmg
+*.msi
+*.AppImage

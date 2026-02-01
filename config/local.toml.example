@@ -1,0 +1,60 @@
+# local.toml.example
+# Daemon configuration for local development
+# Copy to local.toml and customize as needed
+
+[server]
+# HTTP server port for daemon API
+port = 8080
+# Bind address (0.0.0.0 for all interfaces)
+host = "127.0.0.1"
+
+[signaling]
+# WebSocket URL for signaling server
+url = "ws://localhost:8787"
+# Reconnection settings
+reconnect_interval_ms = 1000
+max_reconnect_attempts = 10
+
+[webrtc]
+# ICE server configuration
+ice_servers = [
+    { urls = ["stun:stun.l.google.com:19302"] },
+    # Uncomment for local TURN server
+    # { urls = ["turn:localhost:3478"], username = "testuser", credential = "testpass" }
+]
+# Data channel settings
+max_message_size = 65536
+ordered = true
+
+[terminal]
+# Default shell (auto-detected if not specified)
+# shell = "/bin/bash"
+# Terminal dimensions
+default_cols = 80
+default_rows = 24
+# Scrollback buffer size
+scrollback_lines = 10000
+
+[security]
+# Session timeout in seconds (0 = no timeout)
+session_timeout = 3600
+# Maximum concurrent sessions
+max_sessions = 10
+# Allowed origins for CORS (empty = all)
+allowed_origins = []
+
+[features]
+# Enable debug endpoints
+debug_endpoints = true
+# Enable metrics collection
+metrics = true
+# Enable session recording (experimental)
+session_recording = false
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "debug"
+# Log format: json, pretty
+format = "pretty"
+# Log file path (empty = stdout only)
+# file = "/var/log/remoshell/daemon.log"
