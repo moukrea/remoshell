@@ -30,6 +30,7 @@ export class ConnectionOrchestrator {
   private store: ConnectionStore | null = null;
   private sessionStore: SessionStore | null = null;
   private initialized = false;
+  private initializing = false;
   private state: OrchestratorState = 'idle';
   private sessionPeerMap: Map<string, string> = new Map(); // sessionId -> peerId
   private dataHandlers: Set<DataReceivedHandler> = new Set();
@@ -42,32 +43,37 @@ export class ConnectionOrchestrator {
    * Initialize the orchestrator by wiring all components together
    */
   async initialize(): Promise<void> {
-    if (this.initialized) {
+    if (this.initialized || this.initializing) {
       return;
     }
+    this.initializing = true;
 
-    const config = getConfig();
+    try {
+      const config = getConfig();
 
-    // Initialize components
-    this.signaling = getSignalingClient({ serverUrl: config.signalingUrl });
-    this.webrtc = getWebRTCManager();
-    this.store = getConnectionStore();
-    this.sessionStore = getSessionStore();
+      // Initialize components
+      this.signaling = getSignalingClient({ serverUrl: config.signalingUrl });
+      this.webrtc = getWebRTCManager();
+      this.store = getConnectionStore();
+      this.sessionStore = getSessionStore();
 
-    // Update ICE servers from config
-    this.webrtc.setIceServers(config.iceServers);
+      // Update ICE servers from config
+      this.webrtc.setIceServers(config.iceServers);
 
-    // Wire up signaling events
-    this.signalingUnsubscribe = this.signaling.subscribe(this.handleSignalingEvent);
+      // Wire up signaling events
+      this.signalingUnsubscribe = this.signaling.subscribe(this.handleSignalingEvent);
 
-    // Wire up WebRTC events
-    this.webrtcUnsubscribe = this.webrtc.subscribe(this.handleWebRTCEvent);
+      // Wire up WebRTC events
+      this.webrtcUnsubscribe = this.webrtc.subscribe(this.handleWebRTCEvent);
 
-    // Wire up session store events
-    this.sessionUnsubscribe = this.sessionStore.subscribe(this.handleSessionEvent);
+      // Wire up session store events
+      this.sessionUnsubscribe = this.sessionStore.subscribe(this.handleSessionEvent);
 
-    this.initialized = true;
-    this.state = 'initialized';
+      this.initialized = true;
+      this.state = 'initialized';
+    } finally {
+      this.initializing = false;
+    }
   }
 
   /**
