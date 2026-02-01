@@ -163,7 +163,8 @@ pub trait SignalingClient: Send + Sync {
     fn state(&self) -> ConnectionState;
 
     /// Returns a receiver for signaling events.
-    fn events(&self) -> mpsc::Receiver<SignalingEvent>;
+    /// Returns None if the receiver has already been taken or if the lock is contended.
+    fn events(&self) -> Option<mpsc::Receiver<SignalingEvent>>;
 }
 
 /// Configuration for the WebSocket signaling client.
@@ -689,12 +690,12 @@ impl SignalingClient for WebSocketSignalingClient {
         }
     }
 
-    fn events(&self) -> mpsc::Receiver<SignalingEvent> {
-        // This will only work once; subsequent calls will panic
+    fn events(&self) -> Option<mpsc::Receiver<SignalingEvent>> {
+        // Returns None if already taken or if lock is contended
         // In production, consider a broadcast channel instead
         match self.event_rx.try_write() {
-            Ok(mut guard) => guard.take().expect("events() can only be called once"),
-            Err(_) => panic!("events() can only be called once"),
+            Ok(mut guard) => guard.take(),
+            Err(_) => None,
         }
     }
 }
@@ -857,8 +858,17 @@ mod tests {
         let config = SignalingConfig::new("wss://localhost:8080");
         let client = WebSocketSignalingClient::new(config);
 
-        // First call should succeed
-        let _events = client.events();
+        // First call should succeed and return Some
+        let events = client.events();
+        assert!(events.is_some(), "First call to events() should return Some");
+        let _events = events.unwrap();
+
+        // Second call should return None (already taken)
+        let events_again = client.events();
+        assert!(
+            events_again.is_none(),
+            "Second call to events() should return None"
+        );
 
         // We can verify events are received by changing state
         client.set_state(ConnectionState::Connecting).await;
@@ -916,7 +926,7 @@ mod tests {
             .with_initial_backoff(Duration::from_millis(100));
 
         let client = Arc::new(WebSocketSignalingClient::new(config));
-        let mut events = client.events();
+        let mut events = client.events().expect("events() should return receiver on first call");
 
         // Start the client
         client.clone().start();

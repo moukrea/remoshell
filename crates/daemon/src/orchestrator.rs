@@ -281,7 +281,10 @@ impl DaemonOrchestrator {
         _router: Arc<MessageRouter<SessionManagerImpl>>,
         config: Config,
     ) {
-        let mut events = signaling_client.events();
+        let Some(mut events) = signaling_client.events() else {
+            error!("Failed to get signaling events receiver - already taken");
+            return;
+        };
 
         loop {
             tokio::select! {
