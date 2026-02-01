@@ -61,6 +61,8 @@ export interface XTermWrapperProps {
   options?: Partial<ITerminalOptions>;
   /** CSS class for the container */
   class?: string;
+  /** Callback ref for parent access to terminal handle */
+  ref?: (handle: XTermWrapperHandle) => void;
 }
 
 export interface XTermWrapperHandle {
@@ -143,9 +145,6 @@ const XTermWrapper: Component<XTermWrapperProps> = (props) => {
     getTerminal: () => terminal,
   };
 
-  // Expose handle on the component for parent access
-  (XTermWrapper as any).handle = handle;
-
   onMount(() => {
     if (!containerRef) return;
 
@@ -218,6 +217,9 @@ const XTermWrapper: Component<XTermWrapperProps> = (props) => {
       });
     });
     resizeObserver.observe(containerRef);
+
+    // Call the ref callback to expose handle to parent
+    props.ref?.(handle);
   });
 
   // Effect to update theme when props change

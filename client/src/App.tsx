@@ -15,6 +15,7 @@ import { setSignalingUrl } from './config';
 // Lazy-loaded components for better initial load performance
 // XTermWrapper is a heavy dependency (xterm.js + WebGL addon)
 const XTermWrapper = lazy(() => import('./components/terminal/XTermWrapper'));
+import type { XTermWrapperHandle } from './components/terminal/XTermWrapper';
 
 // FileBrowser is only needed when viewing files
 const FileBrowser = lazy(() => import('./components/files/FileBrowser'));
@@ -46,7 +47,7 @@ const mapConnectionStatus = (signalingStatus: 'disconnected' | 'connecting' | 'c
 const TerminalView: Component = () => {
   const sessionStore = getSessionStore();
   const connectionStore = getConnectionStore();
-  let terminalRef: { write: (data: string) => void } | undefined;
+  const [terminalHandle, setTerminalHandle] = createSignal<XTermWrapperHandle | undefined>();
 
   // Get active session
   const activeSession = () => sessionStore.getActiveSession();
@@ -59,8 +60,9 @@ const TerminalView: Component = () => {
     const unsub = sessionStore.subscribe((event) => {
       if (event.type === 'session:output' && event.sessionId === session.id) {
         const data = event.data as { output: string } | undefined;
-        if (data?.output && terminalRef) {
-          terminalRef.write(data.output);
+        const handle = terminalHandle();
+        if (data?.output && handle) {
+          handle.write(data.output);
         }
       }
     });
@@ -157,7 +159,7 @@ const TerminalView: Component = () => {
           <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
             <Suspense fallback={<LoadingFallback />}>
               <XTermWrapper
-                ref={terminalRef}
+                ref={setTerminalHandle}
                 onData={handleTerminalData}
                 onResize={handleTerminalResize}
                 class="terminal-wrapper"
