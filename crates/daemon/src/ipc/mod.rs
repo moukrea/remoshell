@@ -58,10 +58,12 @@
 
 mod client;
 mod messages;
+pub mod pidfile;
 mod server;
 
 pub use client::IpcClient;
 pub use messages::{IpcRequest, IpcResponse, IpcSessionInfo};
+pub use pidfile::{get_daemon_pid, get_pid_file_path, is_daemon_running};
 pub use server::{IpcConnection, IpcError, IpcServer};
 
 use std::path::PathBuf;
