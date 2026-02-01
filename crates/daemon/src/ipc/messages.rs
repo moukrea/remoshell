@@ -20,6 +20,9 @@ pub enum IpcRequest {
     KillSession {
         /// The unique identifier of the session to kill.
         session_id: String,
+        /// Signal to send to the session (default: SIGTERM/15).
+        /// Common values: 1 (SIGHUP), 9 (SIGKILL), 15 (SIGTERM).
+        signal: Option<i32>,
     },
 }
 
@@ -117,10 +120,26 @@ mod tests {
     fn test_request_kill_session_serialization() {
         let request = IpcRequest::KillSession {
             session_id: "test-session-123".to_string(),
+            signal: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("KillSession"));
         assert!(json.contains("test-session-123"));
+
+        let deserialized: IpcRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, request);
+    }
+
+    #[test]
+    fn test_request_kill_session_with_signal_serialization() {
+        let request = IpcRequest::KillSession {
+            session_id: "test-session-456".to_string(),
+            signal: Some(9),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("KillSession"));
+        assert!(json.contains("test-session-456"));
+        assert!(json.contains("9"));
 
         let deserialized: IpcRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, request);

@@ -163,8 +163,17 @@ impl IpcClient {
     }
 
     /// Kill a specific session by ID.
-    pub async fn kill_session(&mut self, session_id: String) -> Result<IpcResponse, IpcError> {
-        self.send(IpcRequest::KillSession { session_id }).await
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The ID of the session to kill.
+    /// * `signal` - Optional signal number to send (default: SIGTERM/15).
+    pub async fn kill_session(
+        &mut self,
+        session_id: String,
+        signal: Option<i32>,
+    ) -> Result<IpcResponse, IpcError> {
+        self.send(IpcRequest::KillSession { session_id, signal }).await
     }
 }
 
@@ -326,8 +335,9 @@ mod tests {
             let mut conn = server.accept().await.unwrap();
             let request = conn.read_request().await.unwrap().unwrap();
             match request {
-                IpcRequest::KillSession { session_id } => {
+                IpcRequest::KillSession { session_id, signal } => {
                     assert_eq!(session_id, "test-session");
+                    assert_eq!(signal, Some(15));
                     conn.send_response(&IpcResponse::SessionKilled { session_id })
                         .await
                         .unwrap();
@@ -339,7 +349,50 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let mut client = IpcClient::connect(&socket_path).await.unwrap();
-        let response = client.kill_session("test-session".to_string()).await.unwrap();
+        let response = client
+            .kill_session("test-session".to_string(), Some(15))
+            .await
+            .unwrap();
+
+        match response {
+            IpcResponse::SessionKilled { session_id } => {
+                assert_eq!(session_id, "test-session");
+            }
+            _ => panic!("Expected SessionKilled response"),
+        }
+
+        server_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_client_kill_session_with_default_signal() {
+        let temp_dir = tempdir().unwrap();
+        let socket_path = temp_dir.path().join("test.sock");
+
+        let server = IpcServer::bind(&socket_path).await.unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let mut conn = server.accept().await.unwrap();
+            let request = conn.read_request().await.unwrap().unwrap();
+            match request {
+                IpcRequest::KillSession { session_id, signal } => {
+                    assert_eq!(session_id, "test-session");
+                    assert_eq!(signal, None);
+                    conn.send_response(&IpcResponse::SessionKilled { session_id })
+                        .await
+                        .unwrap();
+                }
+                _ => panic!("Expected KillSession request"),
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let mut client = IpcClient::connect(&socket_path).await.unwrap();
+        let response = client
+            .kill_session("test-session".to_string(), None)
+            .await
+            .unwrap();
 
         match response {
             IpcResponse::SessionKilled { session_id } => {

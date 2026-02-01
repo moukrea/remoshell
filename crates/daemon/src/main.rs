@@ -117,6 +117,15 @@ pub enum SessionsCommands {
     Kill {
         /// Session ID to kill
         session_id: String,
+
+        /// Signal to send (default: SIGTERM)
+        /// Common values: SIGTERM (15), SIGKILL (9), SIGHUP (1)
+        #[arg(long, short, default_value = "SIGTERM")]
+        signal: String,
+
+        /// Force kill (equivalent to --signal SIGKILL)
+        #[arg(long, short)]
+        force: bool,
     },
 }
 
@@ -288,8 +297,40 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                SessionsCommands::Kill { session_id: _ } => {
-                    println!("Sessions kill requires a running daemon");
+                SessionsCommands::Kill {
+                    session_id,
+                    signal,
+                    force,
+                } => {
+                    // Determine the signal to send
+                    let signal_to_send = if force {
+                        "SIGKILL".to_string()
+                    } else {
+                        signal
+                    };
+
+                    // Parse the signal
+                    let signal_num = match parse_signal(&signal_to_send) {
+                        Ok(num) => num,
+                        Err(e) => {
+                            eprintln!("Invalid signal: {}", e);
+                            std::process::exit(1);
+                        }
+                    };
+
+                    match kill_session(&session_id, signal_num).await {
+                        Ok(()) => {
+                            println!(
+                                "Session {} terminated with {} ({})",
+                                session_id, signal_to_send, signal_num
+                            );
+                            std::process::exit(0);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to kill session {}: {}", session_id, e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             }
         }
@@ -368,6 +409,36 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Parse a signal string into a signal number.
+///
+/// Accepts:
+/// - Numeric signals: "9", "15"
+/// - Named signals: "SIGTERM", "SIGKILL", "TERM", "KILL"
+fn parse_signal(signal_str: &str) -> anyhow::Result<i32> {
+    // Handle numeric signals
+    if let Ok(num) = signal_str.parse::<i32>() {
+        if num > 0 && num < 32 {
+            return Ok(num);
+        }
+        anyhow::bail!("Invalid signal number: {} (must be 1-31)", num);
+    }
+
+    // Handle named signals (with or without SIG prefix)
+    let name = signal_str.to_uppercase();
+    let name = name.strip_prefix("SIG").unwrap_or(&name);
+
+    match name {
+        "HUP" => Ok(1),
+        "INT" => Ok(2),
+        "QUIT" => Ok(3),
+        "KILL" => Ok(9),
+        "TERM" => Ok(15),
+        "USR1" => Ok(10),
+        "USR2" => Ok(12),
+        _ => anyhow::bail!("Unknown signal: {}", signal_str),
+    }
 }
 
 /// Parse a device ID from its fingerprint format.
@@ -455,6 +526,41 @@ async fn query_sessions_list() -> anyhow::Result<Vec<daemon::ipc::IpcSessionInfo
         IpcResponse::Error { message } => {
             anyhow::bail!("Daemon returned error: {}", message)
         }
+        _ => anyhow::bail!("Unexpected response from daemon"),
+    }
+}
+
+/// Kill a specific session by ID via IPC.
+///
+/// # Arguments
+///
+/// * `session_id` - The ID of the session to kill.
+/// * `signal` - The signal number to send.
+async fn kill_session(session_id: &str, signal: i32) -> anyhow::Result<()> {
+    use std::time::Duration;
+
+    let socket_path = get_socket_path();
+
+    // Connect with timeout
+    let mut client = IpcClient::connect_with_timeout(&socket_path, Duration::from_secs(5))
+        .await
+        .map_err(|_| anyhow::anyhow!("Daemon is not running (cannot connect to socket)"))?;
+
+    // Send kill session request
+    let response = client
+        .kill_session(session_id.to_string(), Some(signal))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to send kill request: {}", e))?;
+
+    match response {
+        IpcResponse::SessionKilled { session_id: killed_id } => {
+            if killed_id == session_id {
+                Ok(())
+            } else {
+                anyhow::bail!("Unexpected session killed: {}", killed_id)
+            }
+        }
+        IpcResponse::Error { message } => anyhow::bail!("{}", message),
         _ => anyhow::bail!("Unexpected response from daemon"),
     }
 }
@@ -953,8 +1059,111 @@ mod tests {
     fn test_sessions_kill() {
         let cli = Cli::try_parse_from(["remoshell", "sessions", "kill", "session789"]).unwrap();
         match cli.command {
-            Commands::Sessions(SessionsCommands::Kill { session_id }) => {
+            Commands::Sessions(SessionsCommands::Kill {
+                session_id,
+                signal,
+                force,
+            }) => {
                 assert_eq!(session_id, "session789");
+                assert_eq!(signal, "SIGTERM");
+                assert!(!force);
+            }
+            _ => panic!("Expected Sessions Kill command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_kill_with_signal() {
+        let cli = Cli::try_parse_from([
+            "remoshell",
+            "sessions",
+            "kill",
+            "session123",
+            "--signal",
+            "SIGKILL",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Sessions(SessionsCommands::Kill {
+                session_id,
+                signal,
+                force,
+            }) => {
+                assert_eq!(session_id, "session123");
+                assert_eq!(signal, "SIGKILL");
+                assert!(!force);
+            }
+            _ => panic!("Expected Sessions Kill command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_kill_with_signal_number() {
+        let cli =
+            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "--signal", "9"])
+                .unwrap();
+        match cli.command {
+            Commands::Sessions(SessionsCommands::Kill {
+                session_id,
+                signal,
+                force,
+            }) => {
+                assert_eq!(session_id, "session123");
+                assert_eq!(signal, "9");
+                assert!(!force);
+            }
+            _ => panic!("Expected Sessions Kill command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_kill_with_short_signal() {
+        let cli =
+            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "-s", "SIGHUP"])
+                .unwrap();
+        match cli.command {
+            Commands::Sessions(SessionsCommands::Kill {
+                session_id,
+                signal,
+                force,
+            }) => {
+                assert_eq!(session_id, "session123");
+                assert_eq!(signal, "SIGHUP");
+                assert!(!force);
+            }
+            _ => panic!("Expected Sessions Kill command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_kill_with_force() {
+        let cli =
+            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "--force"]).unwrap();
+        match cli.command {
+            Commands::Sessions(SessionsCommands::Kill {
+                session_id,
+                signal: _,
+                force,
+            }) => {
+                assert_eq!(session_id, "session123");
+                assert!(force);
+            }
+            _ => panic!("Expected Sessions Kill command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_kill_with_short_force() {
+        let cli =
+            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "-f"]).unwrap();
+        match cli.command {
+            Commands::Sessions(SessionsCommands::Kill {
+                session_id,
+                signal: _,
+                force,
+            }) => {
+                assert_eq!(session_id, "session123");
+                assert!(force);
             }
             _ => panic!("Expected Sessions Kill command"),
         }
@@ -1154,5 +1363,47 @@ mod tests {
         let cli = Cli::try_parse_from(["remoshell", "status", "--config", "/etc/remoshell.toml"])
             .unwrap();
         assert_eq!(cli.config, Some(PathBuf::from("/etc/remoshell.toml")));
+    }
+
+    #[test]
+    fn test_parse_signal_named() {
+        assert_eq!(parse_signal("SIGTERM").unwrap(), 15);
+        assert_eq!(parse_signal("SIGKILL").unwrap(), 9);
+        assert_eq!(parse_signal("SIGHUP").unwrap(), 1);
+        assert_eq!(parse_signal("SIGINT").unwrap(), 2);
+        assert_eq!(parse_signal("SIGQUIT").unwrap(), 3);
+        assert_eq!(parse_signal("SIGUSR1").unwrap(), 10);
+        assert_eq!(parse_signal("SIGUSR2").unwrap(), 12);
+    }
+
+    #[test]
+    fn test_parse_signal_named_without_prefix() {
+        assert_eq!(parse_signal("TERM").unwrap(), 15);
+        assert_eq!(parse_signal("KILL").unwrap(), 9);
+        assert_eq!(parse_signal("HUP").unwrap(), 1);
+        assert_eq!(parse_signal("INT").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_parse_signal_named_lowercase() {
+        assert_eq!(parse_signal("sigterm").unwrap(), 15);
+        assert_eq!(parse_signal("term").unwrap(), 15);
+        assert_eq!(parse_signal("kill").unwrap(), 9);
+    }
+
+    #[test]
+    fn test_parse_signal_numeric() {
+        assert_eq!(parse_signal("15").unwrap(), 15);
+        assert_eq!(parse_signal("9").unwrap(), 9);
+        assert_eq!(parse_signal("1").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_parse_signal_invalid() {
+        assert!(parse_signal("INVALID").is_err());
+        assert!(parse_signal("SIGFOO").is_err());
+        assert!(parse_signal("0").is_err());
+        assert!(parse_signal("32").is_err());
+        assert!(parse_signal("-1").is_err());
     }
 }

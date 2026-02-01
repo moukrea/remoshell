@@ -744,8 +744,10 @@ impl DaemonOrchestrator {
                     .collect();
                 IpcResponse::Sessions { sessions }
             }
-            IpcRequest::KillSession { session_id } => {
-                match session_manager.kill(session_id, Some(9)).await {
+            IpcRequest::KillSession { session_id, signal } => {
+                // Use provided signal or default to SIGTERM (15)
+                let sig = signal.unwrap_or(15);
+                match session_manager.kill(session_id, Some(sig)).await {
                     Ok(_) => IpcResponse::SessionKilled {
                         session_id: session_id.clone(),
                     },
