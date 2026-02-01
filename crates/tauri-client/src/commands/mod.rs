@@ -10,7 +10,7 @@
 //! - Native notifications
 
 use crate::quic::{ChannelType, ConnectionState, QuicConfig, QuicManager};
-use crate::storage::{Database, DatabaseError, KeychainError, PairedDevice};
+use crate::storage::{Database, DatabaseError, KeychainError, KeychainManager, PairedDevice};
 use iroh::NodeAddr;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
