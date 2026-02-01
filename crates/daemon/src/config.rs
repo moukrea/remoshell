@@ -24,6 +24,9 @@ pub enum ConfigError {
 
     #[error("signaling_url must start with ws:// or wss://, got {0}")]
     InvalidSignalingUrl(String),
+
+    #[error("default_shell path does not exist: {0}")]
+    InvalidShellPath(String),
 }
 
 /// Main configuration structure for the RemoShell daemon.
@@ -225,6 +228,25 @@ impl Config {
         let url = &self.network.signaling_url;
         if !url.starts_with("ws://") && !url.starts_with("wss://") {
             return Err(ConfigError::InvalidSignalingUrl(url.clone()));
+        }
+
+        // Validate default_shell path exists
+        let shell_path = std::path::Path::new(&self.session.default_shell);
+
+        // Check if it's an absolute path that exists
+        if shell_path.is_absolute() {
+            if !shell_path.exists() {
+                return Err(ConfigError::InvalidShellPath(
+                    self.session.default_shell.clone(),
+                ));
+            }
+        } else {
+            // For non-absolute paths, try to find in PATH
+            if which::which(&self.session.default_shell).is_err() {
+                return Err(ConfigError::InvalidShellPath(
+                    self.session.default_shell.clone(),
+                ));
+            }
         }
 
         Ok(())
@@ -867,5 +889,56 @@ approval_timeout = 0
         let mut config = Config::default();
         config.network.signaling_url = "example.com:8080".to_string();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_validate_shell_path_absolute_exists() {
+        let mut config = Config::default();
+        // Use a shell that should exist on most Unix systems
+        config.session.default_shell = "/bin/sh".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_validate_shell_path_absolute_exists_windows() {
+        let mut config = Config::default();
+        config.session.default_shell = "C:\\Windows\\System32\\cmd.exe".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_shell_path_absolute_not_exists() {
+        let mut config = Config::default();
+        config.session.default_shell = "/nonexistent/path/to/shell".to_string();
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidShellPath(
+                "/nonexistent/path/to/shell".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_validate_shell_path_in_path() {
+        let mut config = Config::default();
+        // "sh" should be in PATH on most Unix systems
+        config.session.default_shell = "sh".to_string();
+        // This should pass since sh is typically in PATH
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_shell_path_not_in_path() {
+        let mut config = Config::default();
+        config.session.default_shell = "nonexistent_shell_xyz".to_string();
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidShellPath(
+                "nonexistent_shell_xyz".to_string()
+            ))
+        );
     }
 }

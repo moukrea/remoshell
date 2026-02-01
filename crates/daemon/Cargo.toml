@@ -51,6 +51,7 @@ bytes.workspace = true
 
 # Filesystem
 dirs.workspace = true
+which = "6"
 
 # Concurrency
 dashmap.workspace = true
