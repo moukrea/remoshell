@@ -107,7 +107,11 @@ pub enum DevicesCommands {
 #[derive(Subcommand, Debug, Clone)]
 pub enum SessionsCommands {
     /// List all active sessions
-    List,
+    List {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Kill an active session
     Kill {
@@ -268,8 +272,21 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sessions(cmd) => {
             // Sessions commands require a running daemon
             match cmd {
-                SessionsCommands::List => {
-                    println!("Sessions command requires a running daemon");
+                SessionsCommands::List { json } => {
+                    match query_sessions_list().await {
+                        Ok(sessions) => {
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&sessions).unwrap());
+                            } else {
+                                print_sessions_table(&sessions);
+                            }
+                            std::process::exit(0);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to list sessions: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
                 SessionsCommands::Kill { session_id: _ } => {
                     println!("Sessions kill requires a running daemon");
@@ -413,6 +430,110 @@ async fn query_daemon_status() -> anyhow::Result<DaemonStatus> {
             anyhow::bail!("Daemon returned error: {}", message)
         }
         _ => anyhow::bail!("Unexpected response from daemon"),
+    }
+}
+
+/// Query the list of active sessions from the daemon.
+async fn query_sessions_list() -> anyhow::Result<Vec<daemon::ipc::IpcSessionInfo>> {
+    use std::time::Duration;
+
+    let socket_path = get_socket_path();
+
+    // Connect with timeout
+    let mut client = IpcClient::connect_with_timeout(&socket_path, Duration::from_secs(5))
+        .await
+        .map_err(|_| anyhow::anyhow!("Daemon is not running (cannot connect to socket)"))?;
+
+    // Send list sessions request
+    let response = client
+        .list_sessions()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query sessions: {}", e))?;
+
+    match response {
+        IpcResponse::Sessions { sessions } => Ok(sessions),
+        IpcResponse::Error { message } => {
+            anyhow::bail!("Daemon returned error: {}", message)
+        }
+        _ => anyhow::bail!("Unexpected response from daemon"),
+    }
+}
+
+/// Print sessions in a formatted ASCII table.
+fn print_sessions_table(sessions: &[daemon::ipc::IpcSessionInfo]) {
+    if sessions.is_empty() {
+        println!("No active sessions.");
+        return;
+    }
+
+    // Calculate column widths
+    let id_width = sessions
+        .iter()
+        .map(|s| s.id.len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    let peer_width = sessions
+        .iter()
+        .map(|s| s.peer_id.as_ref().map(|p| p.len()).unwrap_or(4))
+        .max()
+        .unwrap_or(7)
+        .max(7);
+
+    // Print header
+    println!(
+        "{:<id_width$}  {:<peer_width$}  {:>12}",
+        "ID", "PEER ID", "CONNECTED",
+        id_width = id_width,
+        peer_width = peer_width
+    );
+    println!("{}", "-".repeat(id_width + peer_width + 16));
+
+    // Print rows
+    for session in sessions {
+        let peer_id = session.peer_id.as_deref().unwrap_or("-");
+        let connected = format_relative_time(session.connected_at);
+
+        println!(
+            "{:<id_width$}  {:<peer_width$}  {:>12}",
+            truncate_str(&session.id, id_width),
+            truncate_str(peer_id, peer_width),
+            connected,
+            id_width = id_width,
+            peer_width = peer_width
+        );
+    }
+
+    println!();
+    println!("Total: {} session(s)", sessions.len());
+}
+
+/// Format a Unix timestamp as relative time (e.g., "5m ago").
+fn format_relative_time(timestamp: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let elapsed = now.saturating_sub(timestamp);
+
+    if elapsed < 60 {
+        format!("{}s ago", elapsed)
+    } else if elapsed < 3600 {
+        format!("{}m ago", elapsed / 60)
+    } else if elapsed < 86400 {
+        format!("{}h ago", elapsed / 3600)
+    } else {
+        format!("{}d ago", elapsed / 86400)
+    }
+}
+
+/// Truncate a string to a maximum length, adding "..." if truncated.
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
     }
 }
 
@@ -810,7 +931,20 @@ mod tests {
     fn test_sessions_list() {
         let cli = Cli::try_parse_from(["remoshell", "sessions", "list"]).unwrap();
         match cli.command {
-            Commands::Sessions(SessionsCommands::List) => {}
+            Commands::Sessions(SessionsCommands::List { json }) => {
+                assert!(!json);
+            }
+            _ => panic!("Expected Sessions List command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_list_json() {
+        let cli = Cli::try_parse_from(["remoshell", "sessions", "list", "--json"]).unwrap();
+        match cli.command {
+            Commands::Sessions(SessionsCommands::List { json }) => {
+                assert!(json);
+            }
             _ => panic!("Expected Sessions List command"),
         }
     }
