@@ -114,8 +114,11 @@ impl<S: SessionManager> MessageRouter<S> {
     ///
     /// Returns `Ok(Some(response))` if a response should be sent back,
     /// `Ok(None)` if no response is needed, or `Err(error)` if routing failed.
-    pub async fn route(&self, message: Message) -> RouterResult {
-        debug!(?message, "Routing message");
+    ///
+    /// The `device_id` parameter identifies which device sent the message,
+    /// enabling device-aware routing decisions and authorization checks.
+    pub async fn route(&self, message: Message, device_id: &DeviceId) -> RouterResult {
+        debug!(?message, ?device_id, "Routing message");
 
         match message {
             // Session messages
@@ -662,6 +665,11 @@ mod tests {
         )
     }
 
+    /// Creates a test device ID for use in unit tests.
+    fn test_device_id() -> DeviceId {
+        DeviceId::from_bytes([0u8; 16])
+    }
+
     // =========================================================================
     // Session Message Tests
     // =========================================================================
@@ -679,7 +687,7 @@ mod tests {
             cwd: None,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
@@ -701,7 +709,7 @@ mod tests {
 
         let msg = Message::SessionCreate(SessionCreate::default());
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_err());
     }
 
@@ -714,7 +722,7 @@ mod tests {
             session_id: "test-session".to_string(),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none()); // No direct response
     }
@@ -728,7 +736,7 @@ mod tests {
             session_id: "test-session".to_string(),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -743,7 +751,7 @@ mod tests {
             signal: Some(9),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -766,7 +774,7 @@ mod tests {
             rows: 40,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -782,7 +790,7 @@ mod tests {
             data: b"hello".to_vec(),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -798,7 +806,7 @@ mod tests {
             data: b"hello".to_vec(),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::InvalidRequest(_))));
     }
@@ -823,7 +831,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -852,7 +860,7 @@ mod tests {
             chunk_size: 1024,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -881,7 +889,7 @@ mod tests {
             mode: 0o644,
             overwrite: false,
         });
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
@@ -891,7 +899,7 @@ mod tests {
             offset: 0,
             data: b"Hello World!".to_vec(),
         });
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
@@ -905,7 +913,7 @@ mod tests {
             path: dest_path.to_string_lossy().to_string(),
             checksum,
         });
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         // Verify file was created
@@ -931,7 +939,7 @@ mod tests {
             protocol_version: 1,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -952,7 +960,7 @@ mod tests {
             reason: Some("Testing".to_string()),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -978,7 +986,7 @@ mod tests {
             payload: b"ping!".to_vec(),
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -1000,7 +1008,7 @@ mod tests {
             payload: vec![],
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1017,7 +1025,7 @@ mod tests {
             recoverable: false,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1036,7 +1044,7 @@ mod tests {
             session_id: "test".to_string(),
             pid: 123,
         });
-        assert!(router.route(msg).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
 
         // SessionClosed
         let msg = Message::SessionClosed(SessionClosed {
@@ -1045,14 +1053,14 @@ mod tests {
             signal: None,
             reason: None,
         });
-        assert!(router.route(msg).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
 
         // FileListResponse
         let msg = Message::FileListResponse(FileListResponse {
             path: "/tmp".to_string(),
             entries: vec![],
         });
-        assert!(router.route(msg).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
 
         // FileDownloadChunk
         let msg = Message::FileDownloadChunk(FileDownloadChunk {
@@ -1062,7 +1070,7 @@ mod tests {
             data: vec![],
             is_last: true,
         });
-        assert!(router.route(msg).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
 
         // DeviceApproved
         let msg = Message::DeviceApproved(DeviceApproved {
@@ -1070,7 +1078,7 @@ mod tests {
             expires_at: None,
             allowed_capabilities: vec![],
         });
-        assert!(router.route(msg).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
 
         // DeviceRejected
         let msg = Message::DeviceRejected(DeviceRejected {
@@ -1078,7 +1086,7 @@ mod tests {
             reason: "test".to_string(),
             retry_allowed: false,
         });
-        assert!(router.route(msg).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
     }
 
     // =========================================================================
@@ -1105,7 +1113,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg).await;
+        let result = router.route(msg, &test_device_id()).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::File(_))));
     }

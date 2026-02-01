@@ -16,6 +16,7 @@ use daemon::orchestrator::{DaemonOrchestrator, OrchestratorState};
 use daemon::router::MessageRouter;
 use daemon::session::{SessionManager, SessionManagerImpl};
 use protocol::messages::{FileListRequest, Message, Ping, SessionCreate};
+use protocol::DeviceId;
 use tempfile::TempDir;
 
 /// Create a test configuration with a temporary directory.
@@ -186,6 +187,11 @@ fn create_test_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
     )
 }
 
+/// Creates a test device ID for use in integration tests.
+fn test_device_id() -> DeviceId {
+    DeviceId::from_bytes([0u8; 16])
+}
+
 /// Mock session manager for router tests
 struct MockSessionManager;
 
@@ -275,7 +281,7 @@ async fn test_router_session_create() {
         cwd: None,
     });
 
-    let result = router.route(msg).await;
+    let result = router.route(msg, &test_device_id()).await;
     assert!(result.is_ok());
 
     match result.unwrap() {
@@ -297,7 +303,7 @@ async fn test_router_ping_pong() {
         payload: b"test".to_vec(),
     });
 
-    let result = router.route(msg).await;
+    let result = router.route(msg, &test_device_id()).await;
     assert!(result.is_ok());
 
     match result.unwrap() {
@@ -325,7 +331,7 @@ async fn test_router_file_list() {
         include_hidden: false,
     });
 
-    let result = router.route(msg).await;
+    let result = router.route(msg, &test_device_id()).await;
     assert!(result.is_ok());
 
     match result.unwrap() {
