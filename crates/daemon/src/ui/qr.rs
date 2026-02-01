@@ -476,7 +476,7 @@ mod tests {
         );
 
         assert_eq!(info.device_id, "TestDevice123");
-        assert_eq!(info.public_key, BASE64.encode(&public_key));
+        assert_eq!(info.public_key, BASE64.encode(public_key));
         assert_eq!(info.relay_url, "wss://relay.example.com");
         assert!(!info.is_expired());
         assert!(info.seconds_until_expiry() > 0);
@@ -490,7 +490,7 @@ mod tests {
             PairingInfo::from_identity(&identity, "wss://relay.example.com".to_string(), Some(60));
 
         assert_eq!(info.device_id, to_base58(identity.device_id().as_bytes()));
-        assert_eq!(info.public_key, BASE64.encode(&identity.public_key_bytes()));
+        assert_eq!(info.public_key, BASE64.encode(identity.public_key_bytes()));
         assert!(!info.is_expired());
     }
 
@@ -546,7 +546,7 @@ mod tests {
         let public_key = [0u8; 32];
         let info = PairingInfo {
             device_id: "TestDeviceId".to_string(),
-            public_key: BASE64.encode(&public_key),
+            public_key: BASE64.encode(public_key),
             relay_url: "wss://relay.example.com".to_string(),
             expires: 1234567890,
         };

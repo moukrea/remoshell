@@ -573,7 +573,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Invalid path outside boundary
-        let result = browser.validate_path_for_creation(&PathBuf::from("/tmp/outside.txt"));
+        let _result = browser.validate_path_for_creation(&PathBuf::from("/tmp/outside.txt"));
         // This might succeed or fail depending on if /tmp is the same as temp_dir's parent
         // The important thing is it validates the parent directory
     }

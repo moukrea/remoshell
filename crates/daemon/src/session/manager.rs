@@ -361,7 +361,7 @@ mod tests {
             result.err()
         );
 
-        let (session_id, pid) = result.unwrap();
+        let (session_id, _pid) = result.unwrap();
         assert!(!session_id.is_empty());
         assert!(manager.exists(&session_id));
         assert_eq!(manager.count(), 1);
@@ -565,15 +565,12 @@ mod tests {
         // Wait for output
         let mut found_output = false;
         for _ in 0..50 {
-            match timeout(Duration::from_millis(100), rx.recv()).await {
-                Ok(Ok(data)) => {
-                    let output = String::from_utf8_lossy(&data);
-                    if output.contains("roundtrip_test_marker") {
-                        found_output = true;
-                        break;
-                    }
+            if let Ok(Ok(data)) = timeout(Duration::from_millis(100), rx.recv()).await {
+                let output = String::from_utf8_lossy(&data);
+                if output.contains("roundtrip_test_marker") {
+                    found_output = true;
+                    break;
                 }
-                _ => {}
             }
         }
 

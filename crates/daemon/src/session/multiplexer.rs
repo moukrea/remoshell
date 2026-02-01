@@ -641,8 +641,8 @@ mod tests {
 
         let all_stats = broadcaster.all_client_stats().await;
         assert_eq!(all_stats.len(), 2);
-        assert!(all_stats.contains_key(&"client-1".to_string()));
-        assert!(all_stats.contains_key(&"client-2".to_string()));
+        assert!(all_stats.contains_key("client-1"));
+        assert!(all_stats.contains_key("client-2"));
 
         for stats in all_stats.values() {
             assert_eq!(stats.messages_sent, 1);

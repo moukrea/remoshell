@@ -8,19 +8,15 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use daemon::config::Config;
 use daemon::devices::TrustStore;
 use daemon::files::{DirectoryBrowser, FileTransfer};
-use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
+use daemon::orchestrator::{DaemonOrchestrator, OrchestratorState};
 use daemon::router::MessageRouter;
 use daemon::session::{SessionManager, SessionManagerImpl};
-use protocol::messages::{
-    DataStream, DeviceApprovalRequest, FileListRequest, Message, Ping, SessionCreate, SessionData,
-};
+use protocol::messages::{FileListRequest, Message, Ping, SessionCreate};
 use tempfile::TempDir;
-use tokio::time::timeout;
 
 /// Create a test configuration with a temporary directory.
 fn create_test_config() -> (Config, TempDir) {

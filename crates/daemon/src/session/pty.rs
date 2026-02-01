@@ -600,15 +600,12 @@ mod tests {
         // Try to receive output with timeout
         let mut found_value = false;
         for _ in 0..50 {
-            match timeout(Duration::from_millis(100), rx.recv()).await {
-                Ok(Ok(data)) => {
-                    let output = String::from_utf8_lossy(&data);
-                    if output.contains("test_value") {
-                        found_value = true;
-                        break;
-                    }
+            if let Ok(Ok(data)) = timeout(Duration::from_millis(100), rx.recv()).await {
+                let output = String::from_utf8_lossy(&data);
+                if output.contains("test_value") {
+                    found_value = true;
+                    break;
                 }
-                _ => {}
             }
         }
 

@@ -68,8 +68,8 @@ fn bench_buffer_operations(c: &mut Criterion) {
         let mut buffer: Vec<u8> = Vec::with_capacity(4096);
         b.iter(|| {
             buffer.clear();
-            buffer.extend(std::iter::repeat(0u8).take(4096));
-            black_box(&buffer)
+            buffer.extend(std::iter::repeat_n(0u8, 4096));
+            black_box(buffer.len())
         });
     });
 
