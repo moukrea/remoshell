@@ -799,7 +799,7 @@ mod tests {
 
         // Set up default permissions for test device (allow all within temp_dir)
         let device_id = test_device_id();
-        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
         path_permissions.set_device_permissions(device_perms).unwrap();
 
         MessageRouter::new(
@@ -850,7 +850,7 @@ mod tests {
         let device_id = create_trusted_device(&trust_store);
 
         // Set up default permissions for trusted device (allow all within temp_dir)
-        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
         path_permissions.set_device_permissions(device_perms).unwrap();
 
         let router = MessageRouter::new(
@@ -915,7 +915,7 @@ mod tests {
         let device_id = create_trusted_device(&trust_store);
 
         // Set up permissions for the device
-        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
         path_permissions.set_device_permissions(device_perms).unwrap();
 
         let router = MessageRouter::new(
@@ -986,7 +986,7 @@ mod tests {
         trust_store.add_device(device).unwrap();
 
         // Set up permissions for the device
-        let device_perms = crate::files::DevicePermissions::allow_all(device_id);
+        let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
         path_permissions.set_device_permissions(device_perms).unwrap();
 
         let router = MessageRouter::new(

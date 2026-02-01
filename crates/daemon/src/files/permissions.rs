@@ -103,12 +103,34 @@ impl DevicePermissions {
         }
     }
 
-    /// Create permissions that allow all access.
-    pub fn allow_all(device_id: DeviceId) -> Self {
+    /// Creates permissions that allow ALL filesystem operations.
+    ///
+    /// # Security Warning
+    /// This grants unrestricted access. Only use for:
+    /// - Development/testing
+    /// - Explicitly configured "full trust" scenarios
+    ///
+    /// For production, prefer `with_allowed_paths()`.
+    pub fn allow_all_dangerous(device_id: DeviceId) -> Self {
         Self {
             device_id,
             paths: Vec::new(),
             default_level: PermissionLevel::Full,
+        }
+    }
+
+    /// Creates permissions with explicit allowed paths.
+    ///
+    /// Only the specified paths (and their subdirectories) are accessible.
+    /// Everything else is denied by default.
+    pub fn with_allowed_paths(device_id: DeviceId, paths: Vec<PathBuf>) -> Self {
+        Self {
+            device_id,
+            paths: paths
+                .into_iter()
+                .map(|p| PathPermission::new(p, PermissionLevel::ReadWrite, true))
+                .collect(),
+            default_level: PermissionLevel::None,
         }
     }
 
@@ -538,11 +560,23 @@ mod tests {
     }
 
     #[test]
-    fn test_device_permissions_allow_all() {
+    fn test_device_permissions_allow_all_dangerous() {
         let device_id = create_test_device_id();
-        let perms = DevicePermissions::allow_all(device_id);
+        let perms = DevicePermissions::allow_all_dangerous(device_id);
 
         assert_eq!(perms.default_level, PermissionLevel::Full);
+    }
+
+    #[test]
+    fn test_device_permissions_with_allowed_paths() {
+        let device_id = create_test_device_id();
+        let paths = vec![PathBuf::from("/home/user"), PathBuf::from("/tmp")];
+        let perms = DevicePermissions::with_allowed_paths(device_id, paths);
+
+        assert_eq!(perms.default_level, PermissionLevel::None);
+        assert_eq!(perms.paths.len(), 2);
+        assert_eq!(perms.paths[0].level, PermissionLevel::ReadWrite);
+        assert!(perms.paths[0].recursive);
     }
 
     #[test]
@@ -666,7 +700,7 @@ mod tests {
         fs::write(&forbidden_file, "forbidden").unwrap();
 
         let device_id = create_test_device_id();
-        let device_perms = DevicePermissions::allow_all(device_id);
+        let device_perms = DevicePermissions::allow_all_dangerous(device_id);
 
         let store = PathPermissions::new(
             temp_dir.path().join("perms.json"),
@@ -686,7 +720,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         let device_id = create_test_device_id();
-        let device_perms = DevicePermissions::allow_all(device_id);
+        let device_perms = DevicePermissions::allow_all_dangerous(device_id);
 
         let store = PathPermissions::new(temp_dir.path().join("perms.json"), vec![]);
         store.set_device_permissions(device_perms).unwrap();

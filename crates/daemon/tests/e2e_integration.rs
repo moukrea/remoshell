@@ -189,7 +189,8 @@ fn create_test_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
     trust_store.add_device(device).unwrap();
 
     // Set up permissions for the test device (allow all within temp_dir)
-    let device_perms = daemon::files::DevicePermissions::allow_all(device_id);
+    // Using allow_all_dangerous() is acceptable here since this is a test environment
+    let device_perms = daemon::files::DevicePermissions::allow_all_dangerous(device_id);
     path_permissions.set_device_permissions(device_perms).unwrap();
 
     MessageRouter::new(
