@@ -162,6 +162,7 @@ impl Config {
     /// Environment variables take precedence over config file values.
     /// Supported variables:
     /// - REMOSHELL_SIGNALING_URL: Override signaling server URL
+    /// - REMOSHELL_LOG_LEVEL: Override log level (trace, debug, info, warn, error)
     pub fn apply_env_overrides(&mut self) {
         if let Ok(url) = std::env::var("REMOSHELL_SIGNALING_URL") {
             if !url.is_empty() {
@@ -170,6 +171,16 @@ impl Config {
                     url
                 );
                 self.network.signaling_url = url;
+            }
+        }
+
+        if let Ok(level) = std::env::var("REMOSHELL_LOG_LEVEL") {
+            if !level.is_empty() {
+                tracing::info!(
+                    "Overriding log_level from environment: {}",
+                    level
+                );
+                self.daemon.log_level = level;
             }
         }
     }
@@ -631,5 +642,66 @@ approval_timeout = 0
 
         // Should NOT be overridden (env var not set)
         assert_eq!(config.network.signaling_url, original_url);
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_override_log_level() {
+        // Clean up any existing env vars first
+        std::env::remove_var("REMOSHELL_SIGNALING_URL");
+        std::env::remove_var("REMOSHELL_LOG_LEVEL");
+
+        // Set the environment variable
+        std::env::set_var("REMOSHELL_LOG_LEVEL", "debug");
+
+        let mut config = Config::default();
+        let original_level = config.daemon.log_level.clone();
+
+        config.apply_env_overrides();
+
+        // Should be overridden
+        assert_eq!(config.daemon.log_level, "debug");
+        assert_ne!(config.daemon.log_level, original_level);
+
+        // Clean up
+        std::env::remove_var("REMOSHELL_LOG_LEVEL");
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_override_log_level_empty_does_not_override() {
+        // Clean up any existing env vars first
+        std::env::remove_var("REMOSHELL_SIGNALING_URL");
+        std::env::remove_var("REMOSHELL_LOG_LEVEL");
+
+        // Set an empty environment variable
+        std::env::set_var("REMOSHELL_LOG_LEVEL", "");
+
+        let mut config = Config::default();
+        let original_level = config.daemon.log_level.clone();
+
+        config.apply_env_overrides();
+
+        // Should NOT be overridden (empty string is ignored)
+        assert_eq!(config.daemon.log_level, original_level);
+
+        // Clean up
+        std::env::remove_var("REMOSHELL_LOG_LEVEL");
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_override_log_level_unset_does_not_override() {
+        // Ensure the environment variable is not set
+        std::env::remove_var("REMOSHELL_SIGNALING_URL");
+        std::env::remove_var("REMOSHELL_LOG_LEVEL");
+
+        let mut config = Config::default();
+        let original_level = config.daemon.log_level.clone();
+
+        config.apply_env_overrides();
+
+        // Should NOT be overridden (env var not set)
+        assert_eq!(config.daemon.log_level, original_level);
     }
 }
