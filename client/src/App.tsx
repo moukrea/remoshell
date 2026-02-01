@@ -6,6 +6,7 @@ import { getSessionStore, type SessionEvent } from './stores/sessions';
 import { getDeviceStore, type DeviceEvent } from './stores/devices';
 import { getFileStore, type FileEvent, type FileEntry } from './stores/files';
 import { OfflineIndicator } from './components/offline';
+import { ToastContainer } from './components/notifications';
 import { getOrchestrator } from './lib/orchestration/ConnectionOrchestrator';
 import { initializeAppLifecycle } from './lib/lifecycle/AppLifecycle';
 import { parsePairingData, isPairingExpired } from './lib/scanner/BarcodeScanner';
@@ -472,6 +473,7 @@ const App: Component = () => {
   return (
     <>
       <OfflineIndicator />
+      <ToastContainer position="top-right" />
       <AppShell
         activeView={activeView()}
         onViewChange={handleViewChange}
