@@ -88,6 +88,7 @@ export class AppLifecycle {
   private notificationQueue: QueuedNotification[] = [];
   private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private initialized = false;
+  private initializing = false;
   private config: Required<LifecycleConfig>;
 
   // Tauri event cleanup functions
@@ -120,19 +121,25 @@ export class AppLifecycle {
    * This sets up event listeners for both Tauri and web platforms.
    */
   async initialize(): Promise<void> {
-    if (this.initialized) {
+    if (this.initialized || this.initializing) {
       return;
     }
 
-    // Set up platform-specific listeners
-    if (TauriIPCBridge.isAvailable()) {
-      await this.initializeTauriListeners();
+    this.initializing = true;
+
+    try {
+      // Set up platform-specific listeners
+      if (TauriIPCBridge.isAvailable()) {
+        await this.initializeTauriListeners();
+      }
+
+      // Always set up web listeners as fallback
+      this.initializeWebListeners();
+
+      this.initialized = true;
+    } finally {
+      this.initializing = false;
     }
-
-    // Always set up web listeners as fallback
-    this.initializeWebListeners();
-
-    this.initialized = true;
   }
 
   /**
