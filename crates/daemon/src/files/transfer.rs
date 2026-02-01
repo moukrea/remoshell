@@ -13,6 +13,7 @@ use std::sync::RwLock;
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tracing::warn;
 
 use super::browser::DirectoryBrowser;
 
@@ -339,7 +340,9 @@ impl FileTransfer {
         let metadata = fs::metadata(&state.temp_path)?;
         if metadata.len() != state.total_size {
             // Clean up temp file
-            let _ = fs::remove_file(&state.temp_path);
+            if let Err(e) = fs::remove_file(&state.temp_path) {
+                warn!(path = ?state.temp_path, error = %e, "Failed to cleanup temp file after size mismatch");
+            }
             return Err(TransferError::SizeMismatch {
                 expected: state.total_size,
                 actual: metadata.len(),
@@ -350,7 +353,9 @@ impl FileTransfer {
         let actual_hash = state.hasher.finalize();
         if actual_hash.as_slice() != checksum {
             // Clean up temp file
-            let _ = fs::remove_file(&state.temp_path);
+            if let Err(e) = fs::remove_file(&state.temp_path) {
+                warn!(path = ?state.temp_path, error = %e, "Failed to cleanup temp file after checksum mismatch");
+            }
             return Err(TransferError::ChecksumMismatch {
                 expected: hex::encode(checksum),
                 actual: hex::encode(actual_hash),
@@ -386,7 +391,9 @@ impl FileTransfer {
 
         if let Some(state) = state {
             // Clean up temp file
-            let _ = fs::remove_file(&state.temp_path);
+            if let Err(e) = fs::remove_file(&state.temp_path) {
+                warn!(path = ?state.temp_path, error = %e, "Failed to cleanup temp file during upload cancellation");
+            }
         }
 
         Ok(())
@@ -420,7 +427,9 @@ impl FileTransfer {
                         if let Ok(modified) = metadata.modified() {
                             if let Ok(age) = modified.elapsed() {
                                 if age > _max_age {
-                                    let _ = fs::remove_file(entry.path());
+                                    if let Err(e) = fs::remove_file(entry.path()) {
+                                        warn!(path = ?entry.path(), error = %e, "Failed to cleanup stale temp file");
+                                    }
                                 }
                             }
                         }
