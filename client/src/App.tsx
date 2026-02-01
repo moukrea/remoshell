@@ -1,4 +1,5 @@
-import { Component, createSignal, Show, createEffect, onMount, onCleanup, For, lazy, Suspense } from 'solid-js';
+import { Component, createSignal, Show, createEffect, onMount, onCleanup, For, lazy, Suspense, ErrorBoundary } from 'solid-js';
+import { ErrorFallback } from './components/error';
 import { AppShell, type AppView } from './components/layout';
 import { getConnectionStore, type ConnectionEvent } from './stores/connection';
 import { getSessionStore, type SessionEvent } from './stores/sessions';
@@ -152,14 +153,16 @@ const TerminalView: Component = () => {
         }
       >
         <div class="terminal-container">
-          <Suspense fallback={<LoadingFallback />}>
-            <XTermWrapper
-              ref={terminalRef}
-              onData={handleTerminalData}
-              onResize={handleTerminalResize}
-              class="terminal-wrapper"
-            />
-          </Suspense>
+          <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
+            <Suspense fallback={<LoadingFallback />}>
+              <XTermWrapper
+                ref={terminalRef}
+                onData={handleTerminalData}
+                onResize={handleTerminalResize}
+                class="terminal-wrapper"
+              />
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </Show>
     </div>
@@ -205,13 +208,15 @@ const FilesView: Component = () => {
           </div>
         }
       >
-        <Suspense fallback={<LoadingFallback />}>
-          <FileBrowser
-            onDownload={handleDownload}
-            onUpload={handleUpload}
-            class="files-browser"
-          />
-        </Suspense>
+        <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
+          <Suspense fallback={<LoadingFallback />}>
+            <FileBrowser
+              onDownload={handleDownload}
+              onUpload={handleUpload}
+              class="files-browser"
+            />
+          </Suspense>
+        </ErrorBoundary>
       </Show>
     </div>
   );
@@ -309,40 +314,46 @@ const DevicesView: Component = () => {
 
           {/* QR Scanner */}
           <div class="pairing-scanner">
-            <Suspense fallback={<LoadingFallback />}>
-              <QRScanner
-                onScan={(data) => handlePairingComplete(data)}
-                onError={(err) => {
-                  console.error('[Pairing] Scan error:', err);
-                  setPairingError(err);
-                }}
-              />
-            </Suspense>
+            <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
+              <Suspense fallback={<LoadingFallback />}>
+                <QRScanner
+                  onScan={(data) => handlePairingComplete(data)}
+                  onError={(err) => {
+                    console.error('[Pairing] Scan error:', err);
+                    setPairingError(err);
+                  }}
+                />
+              </Suspense>
+            </ErrorBoundary>
           </div>
 
           <div class="pairing-divider">
             <span>or enter code manually</span>
           </div>
 
-          <Suspense fallback={<LoadingFallback />}>
-            <PairingCodeInput
-              autoFocus={false}
-              onComplete={handlePairingComplete}
-              error={!!pairingError()}
-              errorMessage={pairingError() ?? undefined}
-            />
-          </Suspense>
+          <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
+            <Suspense fallback={<LoadingFallback />}>
+              <PairingCodeInput
+                autoFocus={false}
+                onComplete={handlePairingComplete}
+                error={!!pairingError()}
+                errorMessage={pairingError() ?? undefined}
+              />
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </Show>
 
       {/* Device list */}
       <div class="devices-content">
-        <Suspense fallback={<LoadingFallback />}>
-          <DeviceList
-            onConnect={handleConnect}
-            onSelectDevice={handleSelectDevice}
-          />
-        </Suspense>
+        <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
+          <Suspense fallback={<LoadingFallback />}>
+            <DeviceList
+              onConnect={handleConnect}
+              onSelectDevice={handleSelectDevice}
+            />
+          </Suspense>
+        </ErrorBoundary>
       </div>
 
       {/* Device details panel */}
