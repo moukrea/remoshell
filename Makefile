@@ -372,3 +372,48 @@ fmt-check: ## Check formatting without changes
 	@printf "$(YELLOW)Checking signaling formatting...$(NC)\n"
 	cd $(ROOT_DIR)/signaling && npm run format:check
 	@printf "$(GREEN)Format check passed$(NC)\n"
+
+# =============================================================================
+# Clean Targets
+# =============================================================================
+
+.PHONY: clean clean-all clean-rust clean-node clean-artifacts clean-android clean-tauri
+
+clean: clean-rust clean-artifacts ## Clean Rust build and artifacts
+	@printf "$(GREEN)Basic clean complete$(NC)\n"
+
+clean-all: clean-rust clean-node clean-artifacts clean-android clean-tauri ## Full clean including node_modules
+	@printf "$(GREEN)Full clean complete$(NC)\n"
+
+clean-rust: ## Clean Rust build outputs (cargo clean)
+	@printf "$(YELLOW)Cleaning Rust build...$(NC)\n"
+	cargo clean
+	@printf "$(GREEN)Rust clean complete$(NC)\n"
+
+clean-node: ## Clean Node.js artifacts (node_modules, dist, .vite)
+	@printf "$(YELLOW)Cleaning Node.js artifacts...$(NC)\n"
+	rm -rf $(ROOT_DIR)/client/node_modules
+	rm -rf $(ROOT_DIR)/client/dist
+	rm -rf $(ROOT_DIR)/client/.vite
+	rm -rf $(ROOT_DIR)/signaling/node_modules
+	rm -rf $(ROOT_DIR)/signaling/dist
+	rm -rf $(ROOT_DIR)/signaling/.vite
+	@printf "$(GREEN)Node.js clean complete$(NC)\n"
+
+clean-artifacts: ## Clean artifacts directory
+	@printf "$(YELLOW)Cleaning artifacts...$(NC)\n"
+	rm -rf $(ROOT_DIR)/artifacts
+	@printf "$(GREEN)Artifacts clean complete$(NC)\n"
+
+clean-android: ## Clean Android build artifacts (gradle, build dirs)
+	@printf "$(YELLOW)Cleaning Android artifacts...$(NC)\n"
+	rm -rf $(ROOT_DIR)/client/src-tauri/gen/android/.gradle
+	rm -rf $(ROOT_DIR)/client/src-tauri/gen/android/build
+	rm -rf $(ROOT_DIR)/client/src-tauri/gen/android/app/build
+	@printf "$(GREEN)Android clean complete$(NC)\n"
+
+clean-tauri: ## Clean Tauri generated outputs
+	@printf "$(YELLOW)Cleaning Tauri gen outputs...$(NC)\n"
+	rm -rf $(ROOT_DIR)/client/src-tauri/gen
+	rm -rf $(ROOT_DIR)/client/src-tauri/target
+	@printf "$(GREEN)Tauri clean complete$(NC)\n"
