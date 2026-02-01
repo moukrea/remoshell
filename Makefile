@@ -513,3 +513,100 @@ package-windows: release-daemon-windows ## Create Windows distribution package
 	cp $(ARTIFACTS_DIR)/daemon/remoshell-windows-x86_64.exe $(ARTIFACTS_DIR)/packages/windows/
 	cd $(ARTIFACTS_DIR)/packages/windows && zip remoshell-windows-x86_64.zip remoshell-windows-x86_64.exe
 	@printf "$(GREEN)Windows package created: $(ARTIFACTS_DIR)/packages/windows/remoshell-windows-x86_64.zip$(NC)\n"
+
+# =============================================================================
+# Docker Targets
+# =============================================================================
+
+DOCKER_COMPOSE := docker compose
+DOCKER_COMPOSE_PROD := docker compose -f docker-compose.yml -f docker-compose.prod.yml
+
+.PHONY: docker docker-build docker-build-daemon docker-build-signaling docker-up docker-down docker-logs
+.PHONY: docker-ps docker-clean docker-push docker-shell-daemon docker-shell-frontend docker-shell-signaling
+.PHONY: docker-rebuild-% docker-prod docker-prod-down docker-health
+
+## docker: Show available docker commands
+docker:
+	@echo "Docker Commands:"
+	@echo "  make docker-build          - Build all Docker images"
+	@echo "  make docker-build-daemon   - Build daemon image only"
+	@echo "  make docker-build-signaling - Build signaling image only"
+	@echo "  make docker-up             - Start all services"
+	@echo "  make docker-down           - Stop all services"
+	@echo "  make docker-logs           - Tail logs from all services"
+	@echo "  make docker-ps             - Show running containers"
+	@echo "  make docker-clean          - Remove containers, volumes, images"
+	@echo "  make docker-push           - Push images to registry"
+	@echo "  make docker-shell-daemon   - Shell into daemon container"
+	@echo "  make docker-shell-frontend - Shell into frontend container"
+	@echo "  make docker-shell-signaling - Shell into signaling container"
+	@echo "  make docker-rebuild-<svc>  - Rebuild and restart a service"
+	@echo "  make docker-prod           - Start production deployment"
+	@echo "  make docker-prod-down      - Stop production deployment"
+	@echo "  make docker-health         - Check service health"
+
+## docker-build: Build all Docker images
+docker-build:
+	$(DOCKER_COMPOSE) build
+
+## docker-build-daemon: Build daemon image only
+docker-build-daemon:
+	$(DOCKER_COMPOSE) build daemon
+
+## docker-build-signaling: Build signaling image only
+docker-build-signaling:
+	$(DOCKER_COMPOSE) build signaling
+
+## docker-up: Start all services in detached mode
+docker-up:
+	$(DOCKER_COMPOSE) up -d
+
+## docker-down: Stop all services
+docker-down:
+	$(DOCKER_COMPOSE) down
+
+## docker-logs: Tail logs from all services
+docker-logs:
+	$(DOCKER_COMPOSE) logs -f
+
+## docker-ps: Show running containers
+docker-ps:
+	$(DOCKER_COMPOSE) ps
+
+## docker-clean: Remove containers, volumes, and images
+docker-clean:
+	$(DOCKER_COMPOSE) down -v --rmi local
+
+## docker-push: Push images to registry
+docker-push:
+	$(DOCKER_COMPOSE) push
+
+## docker-shell-daemon: Open shell in daemon container
+docker-shell-daemon:
+	$(DOCKER_COMPOSE) exec daemon /bin/sh
+
+## docker-shell-frontend: Open shell in frontend container
+docker-shell-frontend:
+	$(DOCKER_COMPOSE) exec frontend /bin/sh
+
+## docker-shell-signaling: Open shell in signaling container
+docker-shell-signaling:
+	$(DOCKER_COMPOSE) exec signaling /bin/sh
+
+## docker-rebuild-%: Rebuild and restart a specific service
+docker-rebuild-%:
+	$(DOCKER_COMPOSE) build $*
+	$(DOCKER_COMPOSE) up -d $*
+
+## docker-prod: Start production deployment
+docker-prod:
+	$(DOCKER_COMPOSE_PROD) up -d
+
+## docker-prod-down: Stop production deployment
+docker-prod-down:
+	$(DOCKER_COMPOSE_PROD) down
+
+## docker-health: Check health of all services
+docker-health:
+	@echo "Checking service health..."
+	@$(DOCKER_COMPOSE) ps --format "table {{.Name}}\t{{.Status}}\t{{.Health}}"
