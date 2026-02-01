@@ -16,7 +16,7 @@ use protocol::messages::{
     SessionResize,
 };
 use protocol::DeviceId;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::devices::{TrustLevel, TrustStore};
 use crate::files::{DirectoryBrowser, FileTransfer};
@@ -382,7 +382,9 @@ impl<S: SessionManager> MessageRouter<S> {
         if let Some(device_id) = parse_device_id_from_fingerprint(&info.device_id) {
             // Update last seen timestamp if device exists
             if let Ok(Some(_)) = self.trust_store.get_device(&device_id) {
-                let _ = self.trust_store.update_last_seen(&device_id);
+                if let Err(e) = self.trust_store.update_last_seen(&device_id) {
+                    error!(error = %e, device_id = ?device_id, "Failed to update device last seen");
+                }
             }
         }
 
