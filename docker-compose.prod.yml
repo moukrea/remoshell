@@ -1,0 +1,170 @@
+# docker-compose.prod.yml
+# RemoteShell Production Configuration
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up --build
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml down
+#   docker compose -f docker-compose.prod.yml --profile turn up
+#
+# This configuration:
+#   - Uses production Dockerfiles (optimized builds)
+#   - Includes restart policies for resilience
+#   - Applies resource limits
+#   - Uses production-level logging (warn)
+#   - Separate network/volumes from development
+
+services:
+  # Signaling server (production)
+  signaling:
+    build:
+      context: ./signaling
+      dockerfile: ../docker/signaling/Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      - RUST_LOG=${RUST_LOG:-warn}
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    networks:
+      - remoshell-prod
+
+  # Daemon service (production build)
+  daemon:
+    build:
+      context: .
+      dockerfile: docker/daemon/Dockerfile.prod
+    ports:
+      - "8080:8080"
+    volumes:
+      # Data persistence only (no source mounts in production)
+      - daemon-data-prod:/home/remoshell/.local/share/remoshell
+    environment:
+      - RUST_LOG=${RUST_LOG:-warn}
+      - REMOSHELL_SIGNALING_URL=${REMOSHELL_SIGNALING_URL:-ws://signaling:8787}
+    depends_on:
+      signaling:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/remoshell-daemon", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 128M
+    networks:
+      - remoshell-prod
+    tty: true
+    stdin_open: true
+
+  # Frontend (production build - static files)
+  # Note: Requires docker/frontend/Dockerfile.prod to exist
+  frontend:
+    build:
+      context: ./client
+      dockerfile: ../docker/frontend/Dockerfile.prod
+      args:
+        - VITE_SIGNALING_URL=${VITE_SIGNALING_URL:-wss://signaling.remoshell.io}
+    ports:
+      - "80:80"
+    environment:
+      - NGINX_WORKER_PROCESSES=auto
+    depends_on:
+      - signaling
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    networks:
+      - remoshell-prod
+
+  # TURN server (production)
+  turn:
+    build:
+      context: .
+      dockerfile: docker/turn/Dockerfile
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--min-port=49152"
+      - "--max-port=49200"
+      - "--user=${TURN_USER:-produser}:${TURN_PASS:-prodpass}"
+      - "--realm=remoshell"
+      - "--fingerprint"
+      - "--lt-cred-mech"
+      - "--no-stun"
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "5349:5349/udp"
+      - "49152-49200:49152-49200/udp"
+    environment:
+      - TURN_USER=${TURN_USER:-produser}
+      - TURN_PASS=${TURN_PASS:-prodpass}
+    healthcheck:
+      test: ["CMD", "turnutils_uclient", "-T", "-p", "3478", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    profiles:
+      - turn
+    networks:
+      - remoshell-prod
+
+# Named volumes (separate from development)
+volumes:
+  daemon-data-prod:
+    name: remoshell-daemon-data-prod
+
+# Production network (separate from development)
+networks:
+  remoshell-prod:
+    name: remoshell-prod
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

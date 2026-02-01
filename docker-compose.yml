@@ -1,0 +1,139 @@
+# docker-compose.yml
+# RemoteShell Development Environment
+#
+# Usage:
+#   docker compose up              Start all services (except TURN)
+#   docker compose up -d           Start in detached mode
+#   docker compose --profile turn up  Start with TURN server
+#   docker compose logs -f         Follow logs
+#   docker compose down            Stop all services
+#
+# Individual services:
+#   docker compose up daemon       Start only the daemon
+#   docker compose up frontend     Start only the frontend
+#   docker compose up signaling    Start only the signaling server
+
+services:
+  # Signaling server (Cloudflare Worker locally via Wrangler)
+  signaling:
+    build:
+      context: ./signaling
+      dockerfile: ../docker/signaling/Dockerfile
+    ports:
+      - "8787:8787"
+    volumes:
+      # Source code mount for hot reload
+      - ./signaling/src:/app/src:ro
+      - ./signaling/wrangler.toml:/app/wrangler.toml:ro
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8787/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - remoshell-dev
+
+  # Daemon service (Rust backend with hot reload)
+  daemon:
+    build:
+      context: .
+      dockerfile: docker/daemon/Dockerfile.dev
+    ports:
+      - "8080:8080"
+    volumes:
+      # Source code mount for cargo-watch hot reload
+      - ./crates:/app/crates:ro
+      - ./Cargo.toml:/app/Cargo.toml:ro
+      - ./Cargo.lock:/app/Cargo.lock:ro
+      # Cargo cache for faster rebuilds
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-git-cache:/usr/local/cargo/git
+      # Target directory for incremental builds
+      - cargo-target:/app/target
+      # Daemon data persistence
+      - daemon-data:/data
+    environment:
+      - RUST_LOG=${RUST_LOG:-debug}
+      - RUST_BACKTRACE=${RUST_BACKTRACE:-1}
+      - REMOSHELL_SIGNALING_URL=${REMOSHELL_SIGNALING_URL:-ws://signaling:8787}
+      - REMOSHELL_DATA_DIR=/data
+    depends_on:
+      signaling:
+        condition: service_healthy
+    networks:
+      - remoshell-dev
+    # Allow PTY operations
+    tty: true
+    stdin_open: true
+
+  # Frontend development server (Vite with hot reload)
+  frontend:
+    build:
+      context: ./client
+      dockerfile: ../docker/frontend/Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      # Source code mount for Vite hot reload
+      - ./client/src:/app/src:ro
+      - ./client/public:/app/public:ro
+      - ./client/index.html:/app/index.html:ro
+      - ./client/vite.config.ts:/app/vite.config.ts:ro
+      - ./client/tsconfig.json:/app/tsconfig.json:ro
+      - ./client/uno.config.ts:/app/uno.config.ts:ro
+      # Exclude node_modules (use container's installed modules)
+    environment:
+      - VITE_SIGNALING_URL=${VITE_SIGNALING_URL:-ws://localhost:8787}
+      - VITE_DEV_MODE=true
+    depends_on:
+      - signaling
+    networks:
+      - remoshell-dev
+
+  # TURN server (optional, for WebRTC relay testing)
+  turn:
+    build:
+      context: .
+      dockerfile: docker/turn/Dockerfile
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--min-port=49152"
+      - "--max-port=49200"
+      - "--user=${TURN_USER:-testuser}:${TURN_PASS:-testpass}"
+      - "--realm=remoshell"
+      - "--fingerprint"
+      - "--lt-cred-mech"
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "5349:5349/udp"
+      - "49152-49200:49152-49200/udp"
+    environment:
+      - TURN_USER=${TURN_USER:-testuser}
+      - TURN_PASS=${TURN_PASS:-testpass}
+    profiles:
+      - turn
+    networks:
+      - remoshell-dev
+
+# Named volumes for data persistence and caching
+volumes:
+  cargo-cache:
+    name: remoshell-cargo-cache
+  cargo-git-cache:
+    name: remoshell-cargo-git
+  cargo-target:
+    name: remoshell-cargo-target
+  daemon-data:
+    name: remoshell-daemon-data
+
+# Internal network for service communication
+networks:
+  remoshell-dev:
+    name: remoshell-dev
+    driver: bridge
