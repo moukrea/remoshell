@@ -243,7 +243,10 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(config.daemon.log_level, "info");
-        assert_eq!(config.network.signaling_url, "wss://remoshell-signaling.moukrea.workers.dev");
+        assert_eq!(
+            config.network.signaling_url,
+            "wss://remoshell-signaling.moukrea.workers.dev"
+        );
         assert_eq!(config.network.stun_servers.len(), 2);
         assert_eq!(config.session.max_sessions, 10);
         assert_eq!(config.file.max_size, 100 * 1024 * 1024);
@@ -307,7 +310,10 @@ max_sessions = 5
         assert_eq!(config.daemon.log_level, "debug");
         assert_eq!(config.session.max_sessions, 5);
         // Other values should be defaults
-        assert_eq!(config.network.signaling_url, "wss://remoshell-signaling.moukrea.workers.dev");
+        assert_eq!(
+            config.network.signaling_url,
+            "wss://remoshell-signaling.moukrea.workers.dev"
+        );
     }
 
     #[test]
