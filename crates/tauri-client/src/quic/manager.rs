@@ -145,20 +145,11 @@ impl QuicConfig {
 }
 
 /// Internal state for managing bi-directional streams per channel type.
+#[derive(Default)]
 struct StreamChannels {
     control: Option<StreamPair>,
     terminal: Option<StreamPair>,
     files: Option<StreamPair>,
-}
-
-impl Default for StreamChannels {
-    fn default() -> Self {
-        Self {
-            control: None,
-            terminal: None,
-            files: None,
-        }
-    }
 }
 
 impl StreamChannels {
@@ -976,9 +967,9 @@ mod tests {
         let server_node_id = server.node_id();
 
         // Create a NodeAddr with direct addresses from bound sockets
-        let mut direct_addrs: Vec<std::net::SocketAddr> = vec![bound_sockets.0.into()];
+        let mut direct_addrs: Vec<std::net::SocketAddr> = vec![bound_sockets.0];
         if let Some(addr) = bound_sockets.1 {
-            direct_addrs.push(addr.into());
+            direct_addrs.push(addr);
         }
 
         let server_addr = NodeAddr::from_parts(server_node_id, None, direct_addrs);

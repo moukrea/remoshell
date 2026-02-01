@@ -10,7 +10,7 @@
 //! - Native notifications
 
 use crate::quic::{ChannelType, ConnectionState, QuicConfig, QuicManager};
-use crate::storage::{Database, DatabaseError, KeychainError, KeychainManager, PairedDevice};
+use crate::storage::{Database, DatabaseError, KeychainError, PairedDevice};
 use iroh::NodeAddr;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -540,9 +540,6 @@ pub async fn show_native_notification(
     app: tauri::AppHandle,
     request: NotificationRequest,
 ) -> CommandResult<NotificationResponse> {
-    // Use Tauri's notification API
-    use tauri::Manager;
-
     // Get the notification plugin
     #[cfg(feature = "notification")]
     {
