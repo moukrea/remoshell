@@ -157,6 +157,23 @@ fn default_shell() -> String {
 }
 
 impl Config {
+    /// Apply environment variable overrides to the configuration.
+    ///
+    /// Environment variables take precedence over config file values.
+    /// Supported variables:
+    /// - REMOSHELL_SIGNALING_URL: Override signaling server URL
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(url) = std::env::var("REMOSHELL_SIGNALING_URL") {
+            if !url.is_empty() {
+                tracing::info!(
+                    "Overriding signaling_url from environment: {}",
+                    url
+                );
+                self.network.signaling_url = url;
+            }
+        }
+    }
+
     /// Load configuration from a file.
     ///
     /// If the file does not exist, returns the default configuration.
@@ -236,6 +253,7 @@ fn format_toml_error(error: &toml::de::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     #[test]
@@ -561,5 +579,57 @@ approval_timeout = 0
 "#;
         let config = Config::from_toml(toml).unwrap();
         assert_eq!(config.security.approval_timeout, 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_override_signaling_url() {
+        // Set the environment variable
+        std::env::set_var("REMOSHELL_SIGNALING_URL", "wss://test.example.com");
+
+        let mut config = Config::default();
+        let original_url = config.network.signaling_url.clone();
+
+        config.apply_env_overrides();
+
+        // Should be overridden
+        assert_eq!(config.network.signaling_url, "wss://test.example.com");
+        assert_ne!(config.network.signaling_url, original_url);
+
+        // Clean up
+        std::env::remove_var("REMOSHELL_SIGNALING_URL");
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_override_empty_does_not_override() {
+        // Set an empty environment variable
+        std::env::set_var("REMOSHELL_SIGNALING_URL", "");
+
+        let mut config = Config::default();
+        let original_url = config.network.signaling_url.clone();
+
+        config.apply_env_overrides();
+
+        // Should NOT be overridden (empty string is ignored)
+        assert_eq!(config.network.signaling_url, original_url);
+
+        // Clean up
+        std::env::remove_var("REMOSHELL_SIGNALING_URL");
+    }
+
+    #[test]
+    #[serial]
+    fn test_env_override_unset_does_not_override() {
+        // Ensure the environment variable is not set
+        std::env::remove_var("REMOSHELL_SIGNALING_URL");
+
+        let mut config = Config::default();
+        let original_url = config.network.signaling_url.clone();
+
+        config.apply_env_overrides();
+
+        // Should NOT be overridden (env var not set)
+        assert_eq!(config.network.signaling_url, original_url);
     }
 }

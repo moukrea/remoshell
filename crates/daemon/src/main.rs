@@ -127,12 +127,15 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("RemoShell daemon starting...");
 
     // Load configuration
-    let config = if let Some(config_path) = &cli.config {
+    let mut config = if let Some(config_path) = &cli.config {
         tracing::info!("Using config file: {:?}", config_path);
         Config::load(config_path)?
     } else {
         Config::load_default()?
     };
+
+    // Apply environment variable overrides
+    config.apply_env_overrides();
 
     // Handle commands
     match cli.command {

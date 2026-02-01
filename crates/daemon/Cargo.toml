@@ -70,6 +70,7 @@ image = "0.25"
 tempfile.workspace = true
 rand.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
+serial_test = "3"
 
 [[bench]]
 name = "message_processing"
