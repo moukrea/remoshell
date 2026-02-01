@@ -1,7 +1,12 @@
+/* Establish full height chain for flex layout */
+html, body, #root {
+  height: 100%;
+}
+
 /* App Shell Layout */
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
   background: var(--bg-primary, #0a0a14);
   color: var(--text-primary, #e4e4e7);
 }
@@ -28,6 +33,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .app-shell__header {
@@ -39,6 +45,7 @@
   flex: 1;
   overflow: auto;
   padding: 1rem;
+  min-height: 0;
 }
 
 /* Header */
