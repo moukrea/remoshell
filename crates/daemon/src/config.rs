@@ -27,7 +27,13 @@ pub enum ConfigError {
 
     #[error("default_shell path does not exist: {0}")]
     InvalidShellPath(String),
+
+    #[error("log_level must be one of: trace, debug, info, warn, error; got {0}")]
+    InvalidLogLevel(String),
 }
+
+/// Valid log level values for tracing configuration.
+const VALID_LOG_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error"];
 
 /// Main configuration structure for the RemoShell daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -247,6 +253,14 @@ impl Config {
                     self.session.default_shell.clone(),
                 ));
             }
+        }
+
+        // Validate log_level is a known value
+        let level = self.daemon.log_level.to_lowercase();
+        if !VALID_LOG_LEVELS.contains(&level.as_str()) {
+            return Err(ConfigError::InvalidLogLevel(
+                self.daemon.log_level.clone(),
+            ));
         }
 
         Ok(())
@@ -940,5 +954,78 @@ approval_timeout = 0
                 "nonexistent_shell_xyz".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn test_validate_log_level_trace() {
+        let mut config = Config::default();
+        config.daemon.log_level = "trace".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_log_level_debug() {
+        let mut config = Config::default();
+        config.daemon.log_level = "debug".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_log_level_info() {
+        let mut config = Config::default();
+        config.daemon.log_level = "info".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_log_level_warn() {
+        let mut config = Config::default();
+        config.daemon.log_level = "warn".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_log_level_error() {
+        let mut config = Config::default();
+        config.daemon.log_level = "error".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_log_level_case_insensitive() {
+        let mut config = Config::default();
+
+        config.daemon.log_level = "DEBUG".to_string();
+        assert!(config.validate().is_ok());
+
+        config.daemon.log_level = "Info".to_string();
+        assert!(config.validate().is_ok());
+
+        config.daemon.log_level = "WARN".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_log_level_invalid() {
+        let mut config = Config::default();
+        config.daemon.log_level = "verbose".to_string();
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidLogLevel("verbose".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_validate_log_level_empty() {
+        let mut config = Config::default();
+        config.daemon.log_level = "".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_log_level_typo() {
+        let mut config = Config::default();
+        config.daemon.log_level = "warning".to_string(); // common typo
+        assert!(config.validate().is_err());
     }
 }
