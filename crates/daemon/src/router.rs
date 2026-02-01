@@ -450,7 +450,9 @@ impl<S: SessionManager> MessageRouter<S> {
                     .map_err(|e| RouterError::Device(e.to_string()))?;
 
                 // Save the trust store
-                let _ = self.trust_store.save();
+                if let Err(e) = self.trust_store.save() {
+                    tracing::error!(error = %e, "Failed to save trust store");
+                }
 
                 info!(device_id = %req.device_id, name = %req.name, "New device registered, pending approval");
 
