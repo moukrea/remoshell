@@ -140,7 +140,7 @@ jobs:
           path: |
             client/src-tauri/target/release/bundle/deb/*.deb
             client/src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   # ========== ANDROID BUILD ==========
   build-android:
