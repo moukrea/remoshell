@@ -1,0 +1,28 @@
+# Development Dockerfile with hot-reload support
+FROM rust:1.85-bookworm
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install cargo-watch for hot reload
+RUN cargo install cargo-watch
+
+# Create app directory
+WORKDIR /app
+
+# Set development environment variables
+ENV RUST_BACKTRACE=1
+ENV RUST_LOG=debug
+
+# Expose daemon port
+EXPOSE 8080
+
+# Volume mount point for source code
+# Mount at runtime: -v $(pwd):/app
+VOLUME ["/app"]
+
+# Default command: watch for changes and rebuild
+CMD ["cargo", "watch", "-x", "run --package daemon --bin remoshell-daemon -- start"]
