@@ -64,7 +64,7 @@ npm run deploy
 Output will show your worker URL:
 ```
 Published remoshell-signaling
-  https://remoshell-signaling.<your-subdomain>.workers.dev
+  https://remoshell-signaling.moukrea.workers.dev
 ```
 
 **Save this URL** - you'll need it for the daemon and client.
@@ -72,7 +72,7 @@ Published remoshell-signaling
 ### Step 4: Verify Deployment
 
 ```bash
-curl https://remoshell-signaling.<your-subdomain>.workers.dev/health
+curl https://remoshell-signaling.moukrea.workers.dev/health
 # Should return: {"status":"ok","rooms":0}
 ```
 
@@ -102,7 +102,7 @@ Create `~/.config/remoshell/config.toml`:
 
 ```toml
 [network]
-relay_url = "wss://remoshell-signaling.<your-subdomain>.workers.dev"
+relay_url = "wss://remoshell-signaling.moukrea.workers.dev"
 
 [session]
 default_shell = "/bin/bash"
@@ -209,7 +209,7 @@ This creates `src-tauri/gen/android/` with the Android project.
 Edit `client/src/lib/signaling/SignalingClient.ts` and update the default URL:
 
 ```typescript
-const DEFAULT_SIGNALING_URL = 'wss://remoshell-signaling.<your-subdomain>.workers.dev';
+const DEFAULT_SIGNALING_URL = 'wss://remoshell-signaling.moukrea.workers.dev';
 ```
 
 Or the app will prompt for it on first use.
@@ -266,7 +266,7 @@ npm run tauri android build
 
 ```bash
 # Using your deployed signaling server
-./target/release/remoshell-daemon pair --relay-url wss://remoshell-signaling.<your-subdomain>.workers.dev
+./target/release/remoshell-daemon pair --relay-url wss://remoshell-signaling.moukrea.workers.dev
 
 # Or if configured in config.toml, just:
 ./target/release/remoshell-daemon pair

@@ -11,7 +11,7 @@ export interface AppConfig {
 }
 
 const DEFAULT_CONFIG: AppConfig = {
-  signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'wss://remoshell-signaling.workers.dev',
+  signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'wss://remoshell-signaling.moukrea.workers.dev',
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },

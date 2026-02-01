@@ -184,7 +184,7 @@ pub struct SignalingConfig {
 impl Default for SignalingConfig {
     fn default() -> Self {
         Self {
-            server_url: "wss://signal.remoshell.dev".to_string(),
+            server_url: "wss://remoshell-signaling.moukrea.workers.dev".to_string(),
             initial_backoff: Duration::from_millis(INITIAL_BACKOFF_MS),
             max_backoff: Duration::from_millis(MAX_BACKOFF_MS),
             backoff_multiplier: BACKOFF_MULTIPLIER,
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn test_signaling_config_default() {
         let config = SignalingConfig::default();
-        assert_eq!(config.server_url, "wss://signal.remoshell.dev");
+        assert_eq!(config.server_url, "wss://remoshell-signaling.moukrea.workers.dev");
         assert!(config.auto_reconnect);
         assert_eq!(config.initial_backoff, Duration::from_millis(100));
         assert_eq!(config.max_backoff, Duration::from_millis(30_000));

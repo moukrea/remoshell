@@ -66,7 +66,7 @@ pub enum Commands {
         output: Option<PathBuf>,
 
         /// Relay/signaling server URL
-        #[arg(long, default_value = "wss://signaling.remoshell.io")]
+        #[arg(long, default_value = "wss://remoshell-signaling.moukrea.workers.dev")]
         relay_url: String,
 
         /// Expiry time in seconds (default: 300 = 5 minutes)
@@ -556,7 +556,7 @@ mod tests {
             } => {
                 assert_eq!(format, PairFormat::Terminal);
                 assert!(output.is_none());
-                assert_eq!(relay_url, "wss://signaling.remoshell.io");
+                assert_eq!(relay_url, "wss://remoshell-signaling.moukrea.workers.dev");
                 assert_eq!(expiry, 300);
             }
             _ => panic!("Expected Pair command"),

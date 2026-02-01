@@ -758,7 +758,7 @@ mod tests {
         let identity = protocol::DeviceIdentity::generate();
         let info = PairingInfo::from_identity(
             &identity,
-            "wss://signaling.remoshell.io:8443".to_string(),
+            "wss://remoshell-signaling.moukrea.workers.dev".to_string(),
             Some(300),
         );
 

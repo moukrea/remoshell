@@ -14,7 +14,7 @@ RUN npm ci --only=production=false
 COPY . .
 
 # Build arguments for environment variables
-ARG VITE_SIGNALING_URL=wss://signaling.remoshell.io
+ARG VITE_SIGNALING_URL=wss://remoshell-signaling.moukrea.workers.dev
 
 # Set environment variables for build
 ENV VITE_SIGNALING_URL=${VITE_SIGNALING_URL}
