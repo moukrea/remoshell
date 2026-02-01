@@ -72,6 +72,10 @@ pub enum TransferError {
     /// File too large.
     #[error("file too large: {size} bytes exceeds limit of {limit} bytes")]
     FileTooLarge { size: u64, limit: u64 },
+
+    /// Lock poisoned during operation.
+    #[error("lock poisoned: {context}")]
+    LockPoisoned { context: String },
 }
 
 /// State for an in-progress upload.
@@ -266,7 +270,7 @@ impl FileTransfer {
         let mut uploads = self
             .uploads
             .write()
-            .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
+            .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during start_upload".to_string() })?;
 
         uploads.insert(key, state);
 
@@ -280,7 +284,7 @@ impl FileTransfer {
         let mut uploads = self
             .uploads
             .write()
-            .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
+            .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during write_chunk".to_string() })?;
 
         let state = uploads
             .get_mut(&key)
@@ -321,7 +325,7 @@ impl FileTransfer {
             let mut uploads = self
                 .uploads
                 .write()
-                .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
+                .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during complete_upload".to_string() })?;
 
             uploads
                 .remove(&key)
@@ -375,7 +379,7 @@ impl FileTransfer {
             let mut uploads = self
                 .uploads
                 .write()
-                .map_err(|_| TransferError::Io(std::io::Error::other("lock poisoned")))?;
+                .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during cancel_upload".to_string() })?;
 
             uploads.remove(&key)
         };
