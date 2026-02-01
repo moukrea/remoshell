@@ -456,11 +456,13 @@ impl DaemonOrchestrator {
 
         let mut conns = connections.write().await;
         if let Some(conn) = conns.get_mut(&device_id) {
-            let answer =
-                webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(
-                    sdp,
-                )
-                .expect("Invalid SDP answer");
+            let answer = match webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(sdp) {
+                Ok(a) => a,
+                Err(e) => {
+                    error!("Invalid SDP answer from device {}: {}", device_id, e);
+                    return;
+                }
+            };
             if let Err(e) = conn.handler.set_remote_description(answer).await {
                 error!("Failed to set remote description for answer: {}", e);
             }
