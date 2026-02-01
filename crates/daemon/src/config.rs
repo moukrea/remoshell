@@ -21,6 +21,9 @@ pub enum ConfigError {
 
     #[error("max_size must be greater than 0, got {0}")]
     InvalidMaxSize(u64),
+
+    #[error("signaling_url must start with ws:// or wss://, got {0}")]
+    InvalidSignalingUrl(String),
 }
 
 /// Main configuration structure for the RemoShell daemon.
@@ -216,6 +219,12 @@ impl Config {
         // Validate max_size: > 0
         if self.file.max_size == 0 {
             return Err(ConfigError::InvalidMaxSize(self.file.max_size));
+        }
+
+        // Validate signaling_url format
+        let url = &self.network.signaling_url;
+        if !url.starts_with("ws://") && !url.starts_with("wss://") {
+            return Err(ConfigError::InvalidSignalingUrl(url.clone()));
         }
 
         Ok(())
@@ -810,5 +819,53 @@ approval_timeout = 0
         // Test boundary: max_size = 1 (valid)
         config.file.max_size = 1;
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_signaling_url_valid_wss() {
+        let mut config = Config::default();
+        config.network.signaling_url = "wss://signal.example.com".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_signaling_url_valid_ws() {
+        let mut config = Config::default();
+        config.network.signaling_url = "ws://localhost:8080".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_signaling_url_invalid_http() {
+        let mut config = Config::default();
+        config.network.signaling_url = "http://example.com".to_string();
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidSignalingUrl("http://example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_validate_signaling_url_invalid_https() {
+        let mut config = Config::default();
+        config.network.signaling_url = "https://example.com".to_string();
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidSignalingUrl("https://example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_validate_signaling_url_invalid_empty() {
+        let mut config = Config::default();
+        config.network.signaling_url = "".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_signaling_url_invalid_no_protocol() {
+        let mut config = Config::default();
+        config.network.signaling_url = "example.com:8080".to_string();
+        assert!(config.validate().is_err());
     }
 }
