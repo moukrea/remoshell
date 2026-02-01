@@ -53,6 +53,9 @@ bytes.workspace = true
 dirs.workspace = true
 which = "6"
 
+# Unix signals
+nix = { version = "0.29", features = ["signal"] }
+
 # Concurrency
 dashmap.workspace = true
 uuid.workspace = true

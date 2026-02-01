@@ -43,7 +43,15 @@ pub enum Commands {
     },
 
     /// Stop the running daemon
-    Stop,
+    Stop {
+        /// Force immediate termination (SIGKILL)
+        #[arg(long, short)]
+        force: bool,
+
+        /// Timeout in seconds for graceful shutdown (default: 30)
+        #[arg(long, default_value = "30")]
+        timeout: u64,
+    },
 
     /// Show daemon status
     Status,
@@ -176,10 +184,35 @@ async fn main() -> anyhow::Result<()> {
                 run_headless(&mut orchestrator).await?;
             }
         }
-        Commands::Stop => {
-            tracing::info!("Stopping daemon");
-            // Send shutdown signal to running daemon via IPC
-            println!("Stop command not yet implemented - use SIGTERM to stop the daemon");
+        Commands::Stop { force, timeout } => {
+            tracing::info!("Stopping daemon (force: {})", force);
+
+            if force {
+                // Force stop using SIGKILL
+                match force_stop_daemon() {
+                    Ok(()) => {
+                        println!("Daemon forcefully terminated");
+                        std::process::exit(0);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to stop daemon: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Graceful shutdown via IPC
+                match graceful_stop_daemon(timeout).await {
+                    Ok(()) => {
+                        println!("Daemon stopped successfully");
+                        std::process::exit(0);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to stop daemon: {}", e);
+                        eprintln!("Try: remoshell-daemon stop --force");
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
         Commands::Status => {
             tracing::info!("Checking daemon status");
@@ -383,6 +416,110 @@ async fn query_daemon_status() -> anyhow::Result<DaemonStatus> {
     }
 }
 
+/// Gracefully stop the daemon via IPC.
+///
+/// Sends a shutdown request to the daemon and waits for acknowledgment.
+async fn graceful_stop_daemon(timeout_secs: u64) -> anyhow::Result<()> {
+    use daemon::ipc::get_pid_file_path;
+    use std::time::Duration;
+
+    let socket_path = get_socket_path();
+
+    // Connect to daemon
+    let mut client = IpcClient::connect_with_timeout(&socket_path, Duration::from_secs(5))
+        .await
+        .map_err(|_| anyhow::anyhow!("Daemon is not running (cannot connect to socket)"))?;
+
+    println!("Sending shutdown request...");
+
+    // Send shutdown request with custom timeout
+    client.set_timeout(Duration::from_secs(timeout_secs));
+    let response = client
+        .stop()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to send stop request: {}", e))?;
+
+    match response {
+        IpcResponse::Stopping => {
+            println!("Shutdown acknowledged, waiting for daemon to exit...");
+        }
+        IpcResponse::Error { message } => {
+            anyhow::bail!("Daemon returned error: {}", message);
+        }
+        _ => {
+            anyhow::bail!("Unexpected response from daemon");
+        }
+    }
+
+    // Wait for daemon to actually exit by polling the socket
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+
+    while start.elapsed() < timeout {
+        // Check if socket is gone (daemon exited)
+        if !socket_path.exists() {
+            return Ok(());
+        }
+
+        // Try to connect - if it fails, daemon is shutting down
+        if IpcClient::connect_with_timeout(&socket_path, Duration::from_millis(100))
+            .await
+            .is_err()
+        {
+            // Clean up stale PID file if it exists
+            let pid_path = get_pid_file_path();
+            let _ = std::fs::remove_file(&pid_path);
+            return Ok(());
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    Err(anyhow::anyhow!(
+        "Timeout waiting for daemon to exit ({}s)",
+        timeout_secs
+    ))
+}
+
+/// Force stop the daemon using SIGKILL.
+///
+/// Reads the daemon PID from the PID file and sends SIGKILL.
+fn force_stop_daemon() -> anyhow::Result<()> {
+    use daemon::ipc::get_pid_file_path;
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    let pid_path = get_pid_file_path();
+
+    if !pid_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Daemon PID file not found - is the daemon running?"
+        ));
+    }
+
+    let pid_str = std::fs::read_to_string(&pid_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read PID file: {}", e))?;
+    let pid: i32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid PID in file: {}", e))?;
+
+    // Send SIGKILL
+    kill(Pid::from_raw(pid), Signal::SIGKILL)
+        .map_err(|e| anyhow::anyhow!("Failed to kill daemon (PID {}): {}", pid, e))?;
+
+    println!("Sent SIGKILL to daemon (PID {})", pid);
+
+    // Clean up PID file
+    let _ = std::fs::remove_file(&pid_path);
+
+    // Clean up socket file
+    let socket_path = get_socket_path();
+    let _ = std::fs::remove_file(&socket_path);
+
+    Ok(())
+}
+
 /// Format a duration in seconds to human-readable format.
 fn format_duration(secs: u64) -> String {
     let hours = secs / 3600;
@@ -575,7 +712,61 @@ mod tests {
     #[test]
     fn test_stop_command() {
         let cli = Cli::try_parse_from(["remoshell", "stop"]).unwrap();
-        assert!(matches!(cli.command, Commands::Stop));
+        match cli.command {
+            Commands::Stop { force, timeout } => {
+                assert!(!force);
+                assert_eq!(timeout, 30);
+            }
+            _ => panic!("Expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn test_stop_with_force() {
+        let cli = Cli::try_parse_from(["remoshell", "stop", "--force"]).unwrap();
+        match cli.command {
+            Commands::Stop { force, timeout } => {
+                assert!(force);
+                assert_eq!(timeout, 30);
+            }
+            _ => panic!("Expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn test_stop_with_short_force() {
+        let cli = Cli::try_parse_from(["remoshell", "stop", "-f"]).unwrap();
+        match cli.command {
+            Commands::Stop { force, timeout } => {
+                assert!(force);
+                assert_eq!(timeout, 30);
+            }
+            _ => panic!("Expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn test_stop_with_timeout() {
+        let cli = Cli::try_parse_from(["remoshell", "stop", "--timeout", "60"]).unwrap();
+        match cli.command {
+            Commands::Stop { force, timeout } => {
+                assert!(!force);
+                assert_eq!(timeout, 60);
+            }
+            _ => panic!("Expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn test_stop_with_force_and_timeout() {
+        let cli = Cli::try_parse_from(["remoshell", "stop", "--force", "--timeout", "10"]).unwrap();
+        match cli.command {
+            Commands::Stop { force, timeout } => {
+                assert!(force);
+                assert_eq!(timeout, 10);
+            }
+            _ => panic!("Expected Stop command"),
+        }
     }
 
     #[test]
