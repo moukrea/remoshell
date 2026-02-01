@@ -6,9 +6,10 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use protocol::DeviceId;
@@ -73,6 +74,48 @@ impl TrustedDevice {
     }
 }
 
+/// A device pending manual approval.
+///
+/// When `require_approval` is enabled, unknown devices are added to the pending
+/// queue instead of being immediately rejected. An administrator can then
+/// approve or reject these devices.
+#[derive(Debug, Clone)]
+pub struct PendingApproval {
+    /// The unique device identifier.
+    pub device_id: DeviceId,
+    /// Human-readable name for the device.
+    pub device_name: String,
+    /// The device's public key (32 bytes, Ed25519).
+    pub public_key: [u8; 32],
+    /// When the approval request was created.
+    pub requested_at: Instant,
+    /// The remote address of the device (if available).
+    pub remote_addr: Option<SocketAddr>,
+}
+
+impl PendingApproval {
+    /// Creates a new pending approval request.
+    pub fn new(
+        device_id: DeviceId,
+        device_name: String,
+        public_key: [u8; 32],
+        remote_addr: Option<SocketAddr>,
+    ) -> Self {
+        Self {
+            device_id,
+            device_name,
+            public_key,
+            requested_at: Instant::now(),
+            remote_addr,
+        }
+    }
+
+    /// Returns how many seconds have elapsed since the approval was requested.
+    pub fn age_secs(&self) -> u64 {
+        self.requested_at.elapsed().as_secs()
+    }
+}
+
 /// Serde support for public key (serializes as base64).
 mod public_key_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -134,16 +177,23 @@ pub struct TrustStore {
     path: PathBuf,
     /// The devices, keyed by device ID.
     devices: RwLock<HashMap<DeviceId, TrustedDevice>>,
+    /// Devices pending manual approval.
+    pending_approvals: RwLock<HashMap<DeviceId, PendingApproval>>,
+    /// Whether manual approval is required for new devices.
+    require_approval: bool,
 }
 
 impl TrustStore {
     /// Creates a new trust store that will persist to the given path.
     ///
     /// This does not load the file; call `load()` to read existing data.
+    /// By default, `require_approval` is set to `false`.
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             devices: RwLock::new(HashMap::new()),
+            pending_approvals: RwLock::new(HashMap::new()),
+            require_approval: false,
         }
     }
 
@@ -152,6 +202,16 @@ impl TrustStore {
     /// The default path is `~/.config/remoshell/trusted_devices.json`.
     pub fn with_default_path() -> Self {
         Self::new(default_trust_store_path())
+    }
+
+    /// Sets whether manual approval is required for new devices.
+    pub fn set_require_approval(&mut self, require: bool) {
+        self.require_approval = require;
+    }
+
+    /// Returns whether manual approval is required for new devices.
+    pub fn require_approval(&self) -> bool {
+        self.require_approval
     }
 
     /// Returns the path to the trust store file.
@@ -372,6 +432,150 @@ impl TrustStore {
     /// Returns true if the store is empty.
     pub fn is_empty(&self) -> Result<bool> {
         Ok(self.len()? == 0)
+    }
+
+    // =========================================================================
+    // Pending Approval Methods
+    // =========================================================================
+
+    /// Adds a device to the pending approvals queue.
+    ///
+    /// If the device is already pending, it will be updated with the new request.
+    pub fn add_pending(&self, approval: PendingApproval) -> Result<()> {
+        let mut pending = self
+            .pending_approvals
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on pending approvals"))?;
+
+        tracing::info!(
+            "Adding device {} ({}) to pending approvals queue",
+            approval.device_id,
+            approval.device_name
+        );
+
+        pending.insert(approval.device_id, approval);
+        Ok(())
+    }
+
+    /// Gets a pending approval by device ID.
+    ///
+    /// Returns `None` if the device is not in the pending queue.
+    pub fn get_pending(&self, device_id: &DeviceId) -> Result<Option<PendingApproval>> {
+        let pending = self
+            .pending_approvals
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on pending approvals"))?;
+
+        Ok(pending.get(device_id).cloned())
+    }
+
+    /// Lists all pending approvals.
+    pub fn list_pending(&self) -> Result<Vec<PendingApproval>> {
+        let pending = self
+            .pending_approvals
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on pending approvals"))?;
+
+        Ok(pending.values().cloned().collect())
+    }
+
+    /// Approves a pending device, moving it to the trusted devices list.
+    ///
+    /// Returns an error if the device is not in the pending queue.
+    pub fn approve_pending(&self, device_id: &DeviceId) -> Result<()> {
+        // First, remove from pending
+        let pending_device = {
+            let mut pending = self
+                .pending_approvals
+                .write()
+                .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on pending approvals"))?;
+
+            pending
+                .remove(device_id)
+                .ok_or_else(|| anyhow::anyhow!("Device {} not found in pending approvals", device_id))?
+        };
+
+        // Create a trusted device from the pending approval
+        let trusted_device = TrustedDevice::new(
+            pending_device.device_id,
+            pending_device.device_name.clone(),
+            pending_device.public_key,
+        );
+
+        // Add to trusted devices
+        self.add_device(trusted_device)?;
+
+        tracing::info!(
+            "Approved device {} ({})",
+            device_id,
+            pending_device.device_name
+        );
+
+        Ok(())
+    }
+
+    /// Rejects a pending device, removing it from the pending queue.
+    ///
+    /// Returns `true` if the device was in the pending queue and removed,
+    /// `false` if it was not found.
+    pub fn reject_pending(&self, device_id: &DeviceId) -> Result<bool> {
+        let mut pending = self
+            .pending_approvals
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on pending approvals"))?;
+
+        let removed = pending.remove(device_id);
+
+        if let Some(ref device) = removed {
+            tracing::info!(
+                "Rejected device {} ({})",
+                device_id,
+                device.device_name
+            );
+        }
+
+        Ok(removed.is_some())
+    }
+
+    /// Checks if a device is in the pending approvals queue.
+    pub fn is_pending(&self, device_id: &DeviceId) -> Result<bool> {
+        let pending = self
+            .pending_approvals
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on pending approvals"))?;
+
+        Ok(pending.contains_key(device_id))
+    }
+
+    /// Returns the number of pending approvals.
+    pub fn pending_count(&self) -> Result<usize> {
+        let pending = self
+            .pending_approvals
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire read lock on pending approvals"))?;
+
+        Ok(pending.len())
+    }
+
+    /// Removes expired pending approvals (older than the given timeout in seconds).
+    ///
+    /// Returns the number of approvals removed.
+    pub fn cleanup_expired_pending(&self, timeout_secs: u64) -> Result<usize> {
+        let mut pending = self
+            .pending_approvals
+            .write()
+            .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on pending approvals"))?;
+
+        let before_count = pending.len();
+
+        pending.retain(|_, approval| approval.age_secs() < timeout_secs);
+
+        let removed = before_count - pending.len();
+        if removed > 0 {
+            tracing::info!("Removed {} expired pending approvals", removed);
+        }
+
+        Ok(removed)
     }
 }
 

@@ -18,7 +18,7 @@ use protocol::messages::{
 use protocol::DeviceId;
 use tracing::{debug, error, info, warn};
 
-use crate::devices::{TrustLevel, TrustStore};
+use crate::devices::{PendingApproval, TrustLevel, TrustStore};
 use crate::files::{DirectoryBrowser, FileTransfer, PathPermissions};
 use crate::session::{SessionError, SessionId, SessionManager, SessionStatus};
 
@@ -561,6 +561,7 @@ impl<S: SessionManager> MessageRouter<S> {
         let device_id = parse_device_id_from_fingerprint(&req.device_id)
             .ok_or_else(|| RouterError::InvalidRequest("Invalid device ID format".to_string()))?;
 
+        // First, check if the device is already in the trusted devices store
         match self.trust_store.get_device(&device_id) {
             Ok(Some(device)) => {
                 match device.trust_level {
@@ -596,31 +597,72 @@ impl<S: SessionManager> MessageRouter<S> {
                 }
             }
             Ok(None) => {
-                // New device - add as unknown and require approval
+                // Check if device is already in the pending queue
+                if self.trust_store.is_pending(&device_id).unwrap_or(false) {
+                    info!(device_id = %req.device_id, "Device already in pending queue");
+                    return Ok(Some(Message::DeviceRejected(DeviceRejected {
+                        device_id: req.device_id,
+                        reason: "Device pending approval".to_string(),
+                        retry_allowed: true,
+                    })));
+                }
+
+                // New device - handle based on require_approval setting
                 let public_key: [u8; 32] = req.public_key.try_into().map_err(|_| {
                     RouterError::InvalidRequest("Invalid public key length".to_string())
                 })?;
 
-                use crate::devices::TrustedDevice;
-                let new_device =
-                    TrustedDevice::new_unknown(device_id, req.name.clone(), public_key);
+                if self.trust_store.require_approval() {
+                    // Add to pending approvals queue
+                    let pending = PendingApproval::new(
+                        device_id,
+                        req.name.clone(),
+                        public_key,
+                        None, // remote_addr not available here, could be passed from connection handler
+                    );
 
-                self.trust_store
-                    .add_device(new_device)
-                    .map_err(|e| RouterError::Device(e.to_string()))?;
+                    self.trust_store
+                        .add_pending(pending)
+                        .map_err(|e| RouterError::Device(e.to_string()))?;
 
-                // Save the trust store
-                if let Err(e) = self.trust_store.save() {
-                    tracing::error!(error = %e, "Failed to save trust store");
+                    info!(
+                        device_id = %req.device_id,
+                        name = %req.name,
+                        "New device added to pending approvals queue"
+                    );
+
+                    Ok(Some(Message::DeviceRejected(DeviceRejected {
+                        device_id: req.device_id,
+                        reason: "Device pending approval".to_string(),
+                        retry_allowed: true,
+                    })))
+                } else {
+                    // require_approval is false - add as unknown (legacy behavior)
+                    use crate::devices::TrustedDevice;
+                    let new_device =
+                        TrustedDevice::new_unknown(device_id, req.name.clone(), public_key);
+
+                    self.trust_store
+                        .add_device(new_device)
+                        .map_err(|e| RouterError::Device(e.to_string()))?;
+
+                    // Save the trust store
+                    if let Err(e) = self.trust_store.save() {
+                        tracing::error!(error = %e, "Failed to save trust store");
+                    }
+
+                    info!(
+                        device_id = %req.device_id,
+                        name = %req.name,
+                        "New device registered, pending approval"
+                    );
+
+                    Ok(Some(Message::DeviceRejected(DeviceRejected {
+                        device_id: req.device_id,
+                        reason: "New device requires approval".to_string(),
+                        retry_allowed: true,
+                    })))
                 }
-
-                info!(device_id = %req.device_id, name = %req.name, "New device registered, pending approval");
-
-                Ok(Some(Message::DeviceRejected(DeviceRejected {
-                    device_id: req.device_id,
-                    reason: "New device requires approval".to_string(),
-                    retry_allowed: true,
-                })))
             }
             Err(e) => Err(RouterError::Device(e.to_string())),
         }

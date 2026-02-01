@@ -5,4 +5,6 @@
 
 pub mod trust_store;
 
-pub use trust_store::{default_trust_store_path, TrustLevel, TrustStore, TrustedDevice};
+pub use trust_store::{
+    default_trust_store_path, PendingApproval, TrustLevel, TrustStore, TrustedDevice,
+};
