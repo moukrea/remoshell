@@ -321,3 +321,54 @@ bench: ## Run Rust benchmarks
 	@printf "$(YELLOW)Running benchmarks...$(NC)\n"
 	cargo bench --workspace
 	@printf "$(GREEN)Benchmarks complete$(NC)\n"
+
+# =============================================================================
+# Lint Targets
+# =============================================================================
+
+.PHONY: lint lint-rust lint-client lint-signaling
+
+lint: lint-rust lint-client lint-signaling ## Run all linters (Rust + Client + Signaling)
+	@printf "$(GREEN)All linting complete$(NC)\n"
+
+lint-rust: ## Run Rust linter (clippy)
+	@printf "$(YELLOW)Running Clippy...$(NC)\n"
+	cargo clippy --workspace -- -D warnings
+	@printf "$(GREEN)Rust lint passed$(NC)\n"
+
+lint-client: ## Run client linter (ESLint)
+	@printf "$(YELLOW)Running client linter...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run lint
+	@printf "$(GREEN)Client lint passed$(NC)\n"
+
+lint-signaling: ## Run signaling worker linter
+	@printf "$(YELLOW)Running signaling linter...$(NC)\n"
+	cd $(ROOT_DIR)/signaling && npm run lint
+	@printf "$(GREEN)Signaling lint passed$(NC)\n"
+
+# =============================================================================
+# Format Targets
+# =============================================================================
+
+.PHONY: format fmt-rust fmt-check
+
+format: fmt-rust ## Format all code (Rust + Client + Signaling)
+	@printf "$(YELLOW)Formatting client code...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run format
+	@printf "$(YELLOW)Formatting signaling code...$(NC)\n"
+	cd $(ROOT_DIR)/signaling && npm run format
+	@printf "$(GREEN)All formatting complete$(NC)\n"
+
+fmt-rust: ## Format Rust code
+	@printf "$(YELLOW)Formatting Rust code...$(NC)\n"
+	cargo fmt --all
+	@printf "$(GREEN)Rust formatting complete$(NC)\n"
+
+fmt-check: ## Check formatting without changes
+	@printf "$(YELLOW)Checking Rust formatting...$(NC)\n"
+	cargo fmt --all -- --check
+	@printf "$(YELLOW)Checking client formatting...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run format:check
+	@printf "$(YELLOW)Checking signaling formatting...$(NC)\n"
+	cd $(ROOT_DIR)/signaling && npm run format:check
+	@printf "$(GREEN)Format check passed$(NC)\n"
