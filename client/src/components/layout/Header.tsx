@@ -14,6 +14,8 @@ export interface HeaderProps {
   onThemeToggle: () => void;
   /** Called when mobile menu toggle is clicked */
   onMobileMenuToggle?: () => void;
+  /** Whether mobile menu is open (for aria-expanded) */
+  mobileMenuOpen?: boolean;
   /** Additional CSS class */
   class?: string;
 }
@@ -62,6 +64,7 @@ const Header: Component<HeaderProps> = (props) => {
         onClick={props.onMobileMenuToggle}
         data-testid="mobile-menu-btn"
         aria-label="Toggle navigation menu"
+        aria-expanded={props.mobileMenuOpen}
       >
         <span class="header__hamburger">
           <span class="header__hamburger-line" />

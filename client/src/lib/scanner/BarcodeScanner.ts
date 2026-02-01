@@ -92,18 +92,18 @@ function getTauriBarcodeScanner(): TauriBarcodeScanner {
  *
  * The pairing QR code contains connection information for establishing
  * a secure connection to a remote device.
+ *
+ * This matches the daemon's PairingInfo format from crates/daemon/src/ui/qr.rs
  */
 export interface PairingData {
-  /** Node ID (public key) of the remote device */
-  nodeId: string;
-  /** Optional relay URL for NAT traversal */
-  relayUrl?: string;
-  /** Optional direct addresses for peer-to-peer connection */
-  directAddresses?: string[];
-  /** Optional device name for display */
-  deviceName?: string;
-  /** Protocol version for compatibility checking */
-  protocolVersion?: number;
+  /** Device ID encoded as base58 */
+  device_id: string;
+  /** Public key encoded as base64 (Ed25519, 32 bytes) */
+  public_key: string;
+  /** Relay/signaling server WebSocket URL */
+  relay_url: string;
+  /** Unix timestamp (seconds) when this pairing code expires */
+  expires: number;
 }
 
 /**
@@ -209,12 +209,12 @@ export function encodeBase58(bytes: Uint8Array): string {
 /**
  * Parse pairing data from a QR code string
  *
- * Supports the following formats:
+ * The daemon generates QR codes containing raw JSON with the PairingInfo structure.
+ * This function also supports the legacy formats for backwards compatibility:
  * - remoshell://connect/<base58-data>
  * - rs://<base58-data>
  * - Raw base58 encoded data
- *
- * The base58 data decodes to a JSON object with pairing information.
+ * - Raw JSON (daemon format)
  */
 export function parsePairingData(qrContent: string): PairingParseResult {
   if (!qrContent || typeof qrContent !== 'string') {
@@ -222,58 +222,76 @@ export function parsePairingData(qrContent: string): PairingParseResult {
   }
 
   const trimmed = qrContent.trim();
-  let encodedData: string;
+  let jsonString: string;
 
-  // Extract the base58 encoded portion
+  // Try to determine the format
   if (trimmed.startsWith(REMOSHELL_URL_PREFIX)) {
-    encodedData = trimmed.slice(REMOSHELL_URL_PREFIX.length);
+    // Legacy format: remoshell://connect/<base58-data>
+    const encodedData = trimmed.slice(REMOSHELL_URL_PREFIX.length);
+    if (!isValidBase58(encodedData)) {
+      return { success: false, error: 'Invalid base58 encoding' };
+    }
+    try {
+      const bytes = decodeBase58(encodedData);
+      const decoder = new TextDecoder();
+      jsonString = decoder.decode(bytes);
+    } catch {
+      return { success: false, error: 'Failed to decode base58 data' };
+    }
   } else if (trimmed.startsWith(SHORT_URL_PREFIX)) {
-    encodedData = trimmed.slice(SHORT_URL_PREFIX.length);
+    // Legacy format: rs://<base58-data>
+    const encodedData = trimmed.slice(SHORT_URL_PREFIX.length);
+    if (!isValidBase58(encodedData)) {
+      return { success: false, error: 'Invalid base58 encoding' };
+    }
+    try {
+      const bytes = decodeBase58(encodedData);
+      const decoder = new TextDecoder();
+      jsonString = decoder.decode(bytes);
+    } catch {
+      return { success: false, error: 'Failed to decode base58 data' };
+    }
+  } else if (trimmed.startsWith('{')) {
+    // Raw JSON format (daemon generates this)
+    jsonString = trimmed;
   } else if (isValidBase58(trimmed)) {
-    encodedData = trimmed;
+    // Raw base58 encoded data
+    try {
+      const bytes = decodeBase58(trimmed);
+      const decoder = new TextDecoder();
+      jsonString = decoder.decode(bytes);
+    } catch {
+      return { success: false, error: 'Failed to decode base58 data' };
+    }
   } else {
-    return { success: false, error: 'Unrecognized QR code format' };
+    return { success: false, error: 'Invalid pairing code format' };
   }
 
-  // Validate and decode the base58 data
-  if (!isValidBase58(encodedData)) {
-    return { success: false, error: 'Invalid base58 encoding' };
-  }
-
+  // Parse the JSON
   try {
-    const bytes = decodeBase58(encodedData);
-    const decoder = new TextDecoder();
-    const jsonString = decoder.decode(bytes);
     const data = JSON.parse(jsonString);
 
-    // Validate required fields
-    if (!data.nodeId || typeof data.nodeId !== 'string') {
-      return { success: false, error: 'Missing or invalid nodeId in pairing data' };
+    // Validate required fields (daemon format)
+    if (!data.device_id || typeof data.device_id !== 'string') {
+      return { success: false, error: 'Missing or invalid device_id in pairing data' };
+    }
+    if (!data.public_key || typeof data.public_key !== 'string') {
+      return { success: false, error: 'Missing or invalid public_key in pairing data' };
+    }
+    if (!data.relay_url || typeof data.relay_url !== 'string') {
+      return { success: false, error: 'Missing or invalid relay_url in pairing data' };
+    }
+    if (typeof data.expires !== 'number') {
+      return { success: false, error: 'Missing or invalid expires in pairing data' };
     }
 
-    // Build pairing data with validated fields
+    // Build pairing data
     const pairingData: PairingData = {
-      nodeId: data.nodeId,
+      device_id: data.device_id,
+      public_key: data.public_key,
+      relay_url: data.relay_url,
+      expires: data.expires,
     };
-
-    // Optional fields
-    if (data.relayUrl && typeof data.relayUrl === 'string') {
-      pairingData.relayUrl = data.relayUrl;
-    }
-
-    if (Array.isArray(data.directAddresses)) {
-      pairingData.directAddresses = data.directAddresses.filter(
-        (addr: unknown) => typeof addr === 'string'
-      );
-    }
-
-    if (data.deviceName && typeof data.deviceName === 'string') {
-      pairingData.deviceName = data.deviceName;
-    }
-
-    if (typeof data.protocolVersion === 'number') {
-      pairingData.protocolVersion = data.protocolVersion;
-    }
 
     return { success: true, data: pairingData };
   } catch (error) {
@@ -289,13 +307,26 @@ export function parsePairingData(qrContent: string): PairingParseResult {
 
 /**
  * Create a pairing QR code content string from pairing data
+ * Uses the same format as the daemon (raw JSON)
  */
 export function createPairingQRContent(data: PairingData): string {
-  const encoder = new TextEncoder();
-  const jsonString = JSON.stringify(data);
-  const bytes = encoder.encode(jsonString);
-  const encoded = encodeBase58(bytes);
-  return `${REMOSHELL_URL_PREFIX}${encoded}`;
+  return JSON.stringify(data);
+}
+
+/**
+ * Check if a pairing code has expired
+ */
+export function isPairingExpired(pairingData: PairingData): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  return now > pairingData.expires;
+}
+
+/**
+ * Get seconds until pairing code expires (0 if already expired)
+ */
+export function secondsUntilExpiry(pairingData: PairingData): number {
+  const now = Math.floor(Date.now() / 1000);
+  return Math.max(0, pairingData.expires - now);
 }
 
 // ============================================================================

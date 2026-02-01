@@ -122,6 +122,7 @@ const AppShell: Component<AppShellProps> = (props) => {
           isDarkTheme={isDark()}
           onThemeToggle={handleThemeToggle}
           onMobileMenuToggle={handleMobileMenuToggle}
+          mobileMenuOpen={mobileMenuOpen()}
           class="app-shell__header"
         />
 

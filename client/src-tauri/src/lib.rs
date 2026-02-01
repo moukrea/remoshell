@@ -26,14 +26,18 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, not(any(target_os = "android", target_os = "ios"))))]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to run Tauri application: {}", e);
+            std::process::exit(1);
+        });
 }

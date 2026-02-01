@@ -5,6 +5,10 @@ import { getSessionStore, type SessionEvent } from './stores/sessions';
 import { getDeviceStore, type DeviceEvent } from './stores/devices';
 import { getFileStore, type FileEvent, type FileEntry } from './stores/files';
 import { OfflineIndicator } from './components/offline';
+import { getOrchestrator } from './lib/orchestration/ConnectionOrchestrator';
+import { initializeAppLifecycle } from './lib/lifecycle/AppLifecycle';
+import { parsePairingData, isPairingExpired } from './lib/scanner/BarcodeScanner';
+import { setSignalingUrl } from './config';
 
 // Lazy-loaded components for better initial load performance
 // XTermWrapper is a heavy dependency (xterm.js + WebGL addon)
@@ -16,6 +20,7 @@ const FileBrowser = lazy(() => import('./components/files/FileBrowser'));
 // DeviceList and PairingCodeInput are lighter but still lazy-loaded
 const DeviceList = lazy(() => import('./components/devices/DeviceList'));
 const PairingCodeInput = lazy(() => import('./components/pairing/PairingCodeInput'));
+const QRScanner = lazy(() => import('./components/pairing/QRScanner'));
 
 /**
  * Loading fallback component for lazy-loaded views
@@ -39,10 +44,27 @@ const mapConnectionStatus = (signalingStatus: 'disconnected' | 'connecting' | 'c
 const TerminalView: Component = () => {
   const sessionStore = getSessionStore();
   const connectionStore = getConnectionStore();
-  let terminalRef: any;
+  let terminalRef: { write: (data: string) => void } | undefined;
 
   // Get active session
   const activeSession = () => sessionStore.getActiveSession();
+
+  // Subscribe to session output events
+  createEffect(() => {
+    const session = activeSession();
+    if (!session) return;
+
+    const unsub = sessionStore.subscribe((event) => {
+      if (event.type === 'session:output' && event.sessionId === session.id) {
+        const data = event.data as { output: string } | undefined;
+        if (data?.output && terminalRef) {
+          terminalRef.write(data.output);
+        }
+      }
+    });
+
+    onCleanup(unsub);
+  });
 
   // Create a new session when connected
   const handleNewSession = () => {
@@ -215,25 +237,52 @@ const DevicesView: Component = () => {
     setSelectedDeviceId(deviceId);
   };
 
-  const handlePairingComplete = (code: string) => {
-    // Process pairing code
-    // In a real implementation, this would:
-    // 1. Parse the QR code data
-    // 2. Extract device info and signaling room
-    // 3. Connect to the signaling server
-    // 4. Initiate WebRTC connection
-    console.log('Pairing code entered:', code);
+  const handlePairingComplete = async (code: string) => {
+    try {
+      // Clear any previous error
+      setPairingError(null);
 
-    // For demo purposes, add a fake device
-    const newDeviceId = `device-${Date.now()}`;
-    deviceStore.addDevice({
-      id: newDeviceId,
-      name: `Device ${code.substring(0, 3)}`,
-      platform: 'linux',
-    });
+      // Parse the pairing code (can be raw JSON or base58 encoded)
+      const parseResult = parsePairingData(code);
+      if (!parseResult.success) {
+        setPairingError(parseResult.error);
+        console.error('[Pairing] Parse failed:', parseResult.error);
+        return;
+      }
 
-    setShowPairing(false);
-    setPairingError(null);
+      const pairingData = parseResult.data;
+
+      // Validate expiry
+      if (isPairingExpired(pairingData)) {
+        setPairingError('Pairing code has expired');
+        console.error('[Pairing] Code expired');
+        return;
+      }
+
+      // Update signaling URL from pairing data
+      if (pairingData.relay_url) {
+        setSignalingUrl(pairingData.relay_url);
+        console.log('[Pairing] Using relay URL:', pairingData.relay_url);
+      }
+
+      // Add device to store
+      deviceStore.addDevice({
+        id: pairingData.device_id,
+        name: `Device ${pairingData.device_id.substring(0, 8)}`,
+        platform: 'unknown',
+      });
+
+      // Connect via orchestrator using device_id as room ID
+      const orchestrator = getOrchestrator();
+      await orchestrator.connect(pairingData.device_id);
+
+      setShowPairing(false);
+      console.log('[Pairing] Successfully initiated connection to device:', pairingData.device_id);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error during pairing';
+      setPairingError(errorMessage);
+      console.error('[Pairing] Failed:', error);
+    }
   };
 
   const selectedDevice = () => {
@@ -256,19 +305,33 @@ const DevicesView: Component = () => {
       {/* Pairing section */}
       <Show when={showPairing()}>
         <div class="devices-pairing" data-testid="pairing-section">
-          <h3>Enter Pairing Code</h3>
-          <p>Enter the code shown on the remote device</p>
+          <h3>Pair a Device</h3>
+
+          {/* QR Scanner */}
+          <div class="pairing-scanner">
+            <Suspense fallback={<LoadingFallback />}>
+              <QRScanner
+                onScan={(data) => handlePairingComplete(data)}
+                onError={(err) => {
+                  console.error('[Pairing] Scan error:', err);
+                  setPairingError(err);
+                }}
+              />
+            </Suspense>
+          </div>
+
+          <div class="pairing-divider">
+            <span>or enter code manually</span>
+          </div>
+
           <Suspense fallback={<LoadingFallback />}>
             <PairingCodeInput
-              autoFocus
+              autoFocus={false}
               onComplete={handlePairingComplete}
               error={!!pairingError()}
               errorMessage={pairingError() ?? undefined}
             />
           </Suspense>
-          <p class="devices-pairing__hint">
-            Or scan the QR code with your camera (coming soon)
-          </p>
         </div>
       </Show>
 
@@ -332,7 +395,21 @@ const App: Component = () => {
   });
 
   // Subscribe to store events for logging/debugging
-  onMount(() => {
+  onMount(async () => {
+    // Initialize app lifecycle and connection orchestrator
+    try {
+      // Initialize lifecycle management (handles foreground/background)
+      await initializeAppLifecycle();
+      console.log('[App] Lifecycle manager initialized');
+
+      // Initialize connection orchestrator
+      const orchestrator = getOrchestrator();
+      await orchestrator.initialize();
+      console.log('[App] Connection orchestrator initialized');
+    } catch (error) {
+      console.error('[App] Initialization failed:', error);
+    }
+
     // Connection store events
     const unsubConnection = connectionStore.subscribe((event: ConnectionEvent) => {
       console.log('[Connection]', event.type, event);

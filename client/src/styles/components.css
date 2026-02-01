@@ -71,18 +71,55 @@
 
 .header__mobile-menu-btn {
   display: none;
-  padding: 0.5rem;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.75rem;
   background: transparent;
   border: none;
   cursor: pointer;
+  align-items: center;
+  justify-content: center;
 }
 
 .header__theme-toggle {
+  min-width: 44px;
+  min-height: 44px;
   padding: 0.5rem;
   background: transparent;
   border: none;
   cursor: pointer;
   color: inherit;
+}
+
+/* Hamburger menu icon */
+.header__hamburger {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 24px;
+  height: 18px;
+}
+
+.header__hamburger-line {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background-color: var(--text-primary);
+  border-radius: 1px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+/* Hamburger animation when menu is open */
+.header__mobile-menu-btn[aria-expanded="true"] .header__hamburger-line:nth-child(1) {
+  transform: translateY(8px) rotate(45deg);
+}
+
+.header__mobile-menu-btn[aria-expanded="true"] .header__hamburger-line:nth-child(2) {
+  opacity: 0;
+}
+
+.header__mobile-menu-btn[aria-expanded="true"] .header__hamburger-line:nth-child(3) {
+  transform: translateY(-8px) rotate(-45deg);
 }
 
 /* Sidebar */
@@ -166,6 +203,13 @@
   color: var(--text-primary, #e4e4e7);
 }
 
+/* Tablet breakpoint */
+@media (max-width: 1024px) {
+  .app-shell__sidebar {
+    width: 200px;
+  }
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .app-shell__sidebar {
@@ -183,5 +227,35 @@
 
   .header__mobile-menu-btn {
     display: flex;
+  }
+
+  .sidebar__collapse-btn {
+    display: none; /* Hide on mobile - sidebar is drawer */
+  }
+
+  .app-shell__content {
+    padding: 0.75rem;
+  }
+
+  .header__title {
+    font-size: 1rem;
+  }
+}
+
+/* Small phone breakpoint */
+@media (max-width: 480px) {
+  .app-shell__content {
+    padding: 0.5rem;
+  }
+
+  .terminal-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .terminal-tab {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    white-space: nowrap;
   }
 }

@@ -44,6 +44,7 @@ export type SessionEventType =
   | 'session:closed'
   | 'session:active'
   | 'session:input'
+  | 'session:output'
   | 'session:resize'
   | 'session:flow:paused'
   | 'session:flow:resumed'
@@ -270,6 +271,34 @@ export function createSessionStore() {
   };
 
   /**
+   * Write output to a terminal session
+   * Called when data is received from the remote peer
+   */
+  const writeOutput = (sessionId: string, data: string): void => {
+    const session = state.sessions[sessionId];
+    if (!session) {
+      console.warn('[Sessions] No session found for output:', sessionId);
+      return;
+    }
+
+    // Update last activity timestamp
+    setState(
+      produce((s) => {
+        const sess = s.sessions[sessionId];
+        if (sess) {
+          sess.lastActivityAt = Date.now();
+        }
+      })
+    );
+
+    emit({
+      type: 'session:output',
+      sessionId,
+      data: { output: data },
+    });
+  };
+
+  /**
    * Resize a terminal session
    */
   const resizeTerminal = (sessionId: string, cols: number, rows: number): boolean => {
@@ -487,6 +516,7 @@ export function createSessionStore() {
     closeSession,
     setActiveSession,
     sendInput,
+    writeOutput,
     resizeTerminal,
 
     // Flow control actions

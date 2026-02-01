@@ -7,6 +7,8 @@ import {
   getScannerPlatform,
   parsePairingData,
   createPairingQRContent,
+  isPairingExpired,
+  secondsUntilExpiry,
   isValidBase58,
   decodeBase58,
   encodeBase58,
@@ -42,14 +44,13 @@ vi.mock('./WebCameraScanner', () => {
 // ============================================================================
 
 /**
- * Sample pairing data for testing
+ * Sample pairing data for testing (matches daemon PairingInfo format)
  */
 const samplePairingData: PairingData = {
-  nodeId: 'test-node-id-12345',
-  relayUrl: 'https://relay.example.com',
-  directAddresses: ['192.168.1.100:5000', '10.0.0.1:5000'],
-  deviceName: 'Test Device',
-  protocolVersion: 1,
+  device_id: 'test-device-id-12345',
+  public_key: 'dGVzdC1wdWJsaWMta2V5LWJhc2U2NA==', // base64 encoded
+  relay_url: 'wss://relay.example.com',
+  expires: Math.floor(Date.now() / 1000) + 300, // 5 minutes from now
 };
 
 /**
@@ -187,54 +188,76 @@ describe('Base58 Encoding', () => {
 
 describe('Pairing Data Parsing', () => {
   describe('parsePairingData', () => {
-    it('should parse valid pairing data with remoshell:// prefix', () => {
+    it('should parse valid pairing data as raw JSON (daemon format)', () => {
       const qrContent = createPairingQRContent(samplePairingData);
-      expect(qrContent.startsWith('remoshell://connect/')).toBe(true);
+      // New format uses raw JSON, not remoshell:// prefix
+      expect(qrContent.startsWith('{')).toBe(true);
 
       const result = parsePairingData(qrContent);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.nodeId).toBe(samplePairingData.nodeId);
-        expect(result.data.relayUrl).toBe(samplePairingData.relayUrl);
-        expect(result.data.directAddresses).toEqual(samplePairingData.directAddresses);
-        expect(result.data.deviceName).toBe(samplePairingData.deviceName);
-        expect(result.data.protocolVersion).toBe(samplePairingData.protocolVersion);
+        expect(result.data.device_id).toBe(samplePairingData.device_id);
+        expect(result.data.public_key).toBe(samplePairingData.public_key);
+        expect(result.data.relay_url).toBe(samplePairingData.relay_url);
+        expect(result.data.expires).toBe(samplePairingData.expires);
       }
     });
 
-    it('should parse valid pairing data with rs:// prefix', () => {
-      const fullQR = createPairingQRContent(samplePairingData);
-      const encodedPart = fullQR.replace('remoshell://connect/', '');
-      const shortQR = `rs://${encodedPart}`;
+    it('should parse legacy format with remoshell:// prefix', () => {
+      // Create legacy format (base58 encoded JSON with remoshell:// prefix)
+      const encoder = new TextEncoder();
+      const bytes = encoder.encode(JSON.stringify(samplePairingData));
+      const encoded = encodeBase58(bytes);
+      const legacyQR = `remoshell://connect/${encoded}`;
+
+      const result = parsePairingData(legacyQR);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.device_id).toBe(samplePairingData.device_id);
+      }
+    });
+
+    it('should parse legacy format with rs:// prefix', () => {
+      const encoder = new TextEncoder();
+      const bytes = encoder.encode(JSON.stringify(samplePairingData));
+      const encoded = encodeBase58(bytes);
+      const shortQR = `rs://${encoded}`;
 
       const result = parsePairingData(shortQR);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.nodeId).toBe(samplePairingData.nodeId);
+        expect(result.data.device_id).toBe(samplePairingData.device_id);
       }
     });
 
     it('should parse raw base58 encoded data', () => {
-      const fullQR = createPairingQRContent(samplePairingData);
-      const encodedPart = fullQR.replace('remoshell://connect/', '');
+      const encoder = new TextEncoder();
+      const bytes = encoder.encode(JSON.stringify(samplePairingData));
+      const encoded = encodeBase58(bytes);
 
-      const result = parsePairingData(encodedPart);
+      const result = parsePairingData(encoded);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.nodeId).toBe(samplePairingData.nodeId);
+        expect(result.data.device_id).toBe(samplePairingData.device_id);
       }
     });
 
-    it('should parse minimal pairing data (only nodeId)', () => {
-      const minimalData: PairingData = { nodeId: 'minimal-node-id' };
-      const qrContent = createPairingQRContent(minimalData);
+    it('should parse complete pairing data with all required fields', () => {
+      const completeData: PairingData = {
+        device_id: 'complete-device-id',
+        public_key: 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=',
+        relay_url: 'wss://complete.relay.com',
+        expires: Math.floor(Date.now() / 1000) + 600,
+      };
+      const qrContent = createPairingQRContent(completeData);
 
       const result = parsePairingData(qrContent);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.nodeId).toBe('minimal-node-id');
-        expect(result.data.relayUrl).toBeUndefined();
-        expect(result.data.directAddresses).toBeUndefined();
+        expect(result.data.device_id).toBe('complete-device-id');
+        expect(result.data.public_key).toBe(completeData.public_key);
+        expect(result.data.relay_url).toBe(completeData.relay_url);
+        expect(result.data.expires).toBe(completeData.expires);
       }
     });
 
@@ -250,7 +273,7 @@ describe('Pairing Data Parsing', () => {
       const result = parsePairingData('https://example.com/not-pairing');
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('Unrecognized QR code format');
+        expect(result.error).toBe('Invalid pairing code format');
       }
     });
 
@@ -262,16 +285,39 @@ describe('Pairing Data Parsing', () => {
       }
     });
 
-    it('should return error for missing nodeId', () => {
-      const invalidData = { relayUrl: 'https://relay.example.com' };
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(JSON.stringify(invalidData));
-      const encoded = encodeBase58(bytes);
-
-      const result = parsePairingData(`remoshell://connect/${encoded}`);
+    it('should return error for missing device_id', () => {
+      const invalidData = { relay_url: 'wss://relay.example.com', public_key: 'abc', expires: 123 };
+      const result = parsePairingData(JSON.stringify(invalidData));
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('Missing or invalid nodeId in pairing data');
+        expect(result.error).toBe('Missing or invalid device_id in pairing data');
+      }
+    });
+
+    it('should return error for missing public_key', () => {
+      const invalidData = { device_id: 'test', relay_url: 'wss://relay.example.com', expires: 123 };
+      const result = parsePairingData(JSON.stringify(invalidData));
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe('Missing or invalid public_key in pairing data');
+      }
+    });
+
+    it('should return error for missing relay_url', () => {
+      const invalidData = { device_id: 'test', public_key: 'abc', expires: 123 };
+      const result = parsePairingData(JSON.stringify(invalidData));
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe('Missing or invalid relay_url in pairing data');
+      }
+    });
+
+    it('should return error for missing expires', () => {
+      const invalidData = { device_id: 'test', public_key: 'abc', relay_url: 'wss://relay.example.com' };
+      const result = parsePairingData(JSON.stringify(invalidData));
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe('Missing or invalid expires in pairing data');
       }
     });
 
@@ -292,28 +338,15 @@ describe('Pairing Data Parsing', () => {
       const result = parsePairingData(`  ${qrContent}  `);
       expect(result.success).toBe(true);
     });
-
-    it('should filter invalid directAddresses', () => {
-      const dataWithInvalidAddresses = {
-        nodeId: 'test-node',
-        directAddresses: ['valid-address', 123, null, 'another-valid'],
-      };
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(JSON.stringify(dataWithInvalidAddresses));
-      const encoded = encodeBase58(bytes);
-
-      const result = parsePairingData(`remoshell://connect/${encoded}`);
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.directAddresses).toEqual(['valid-address', 'another-valid']);
-      }
-    });
   });
 
   describe('createPairingQRContent', () => {
-    it('should create QR content with correct prefix', () => {
+    it('should create QR content as raw JSON (daemon format)', () => {
       const content = createPairingQRContent(samplePairingData);
-      expect(content.startsWith('remoshell://connect/')).toBe(true);
+      // New format uses raw JSON
+      expect(content.startsWith('{')).toBe(true);
+      const parsed = JSON.parse(content);
+      expect(parsed.device_id).toBe(samplePairingData.device_id);
     });
 
     it('should create content that can be parsed back', () => {
@@ -321,8 +354,49 @@ describe('Pairing Data Parsing', () => {
       const result = parsePairingData(content);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data).toEqual(samplePairingData);
+        expect(result.data.device_id).toBe(samplePairingData.device_id);
+        expect(result.data.public_key).toBe(samplePairingData.public_key);
+        expect(result.data.relay_url).toBe(samplePairingData.relay_url);
+        expect(result.data.expires).toBe(samplePairingData.expires);
       }
+    });
+  });
+
+  describe('isPairingExpired', () => {
+    it('should return false for non-expired pairing data', () => {
+      const futureExpires: PairingData = {
+        ...samplePairingData,
+        expires: Math.floor(Date.now() / 1000) + 300, // 5 minutes from now
+      };
+      expect(isPairingExpired(futureExpires)).toBe(false);
+    });
+
+    it('should return true for expired pairing data', () => {
+      const pastExpires: PairingData = {
+        ...samplePairingData,
+        expires: Math.floor(Date.now() / 1000) - 60, // 1 minute ago
+      };
+      expect(isPairingExpired(pastExpires)).toBe(true);
+    });
+  });
+
+  describe('secondsUntilExpiry', () => {
+    it('should return positive seconds for non-expired data', () => {
+      const futureExpires: PairingData = {
+        ...samplePairingData,
+        expires: Math.floor(Date.now() / 1000) + 300, // 5 minutes from now
+      };
+      const seconds = secondsUntilExpiry(futureExpires);
+      expect(seconds).toBeGreaterThan(290);
+      expect(seconds).toBeLessThanOrEqual(300);
+    });
+
+    it('should return 0 for expired data', () => {
+      const pastExpires: PairingData = {
+        ...samplePairingData,
+        expires: Math.floor(Date.now() / 1000) - 60, // 1 minute ago
+      };
+      expect(secondsUntilExpiry(pastExpires)).toBe(0);
     });
   });
 });
@@ -472,7 +546,7 @@ describe('BarcodeScanner', () => {
       expect(mockScanner.scan).toHaveBeenCalledWith({ windowed: false });
       expect(result.content).toBe(pairingQR);
       expect(result.pairingData).toBeDefined();
-      expect(result.pairingData?.nodeId).toBe(samplePairingData.nodeId);
+      expect(result.pairingData?.device_id).toBe(samplePairingData.device_id);
     });
 
     it('should use windowed mode when configured', async () => {
