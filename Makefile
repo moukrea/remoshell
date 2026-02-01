@@ -417,3 +417,99 @@ clean-tauri: ## Clean Tauri generated outputs
 	rm -rf $(ROOT_DIR)/client/src-tauri/gen
 	rm -rf $(ROOT_DIR)/client/src-tauri/target
 	@printf "$(GREEN)Tauri clean complete$(NC)\n"
+
+# =============================================================================
+# Release Targets
+# =============================================================================
+
+.PHONY: release release-all release-daemon release-web release-desktop release-android
+.PHONY: release-cross release-daemon-macos-x86 release-daemon-macos-arm release-daemon-windows
+.PHONY: package-linux package-macos package-windows
+
+## Artifacts directory for release builds
+ARTIFACTS_DIR := $(ROOT_DIR)/artifacts
+
+release: release-daemon ## Build release daemon (main release target)
+	@printf "$(GREEN)Release build complete$(NC)\n"
+
+release-all: release-daemon release-web release-desktop release-android ## Build all release artifacts
+	@printf "$(GREEN)All release builds complete$(NC)\n"
+
+release-daemon: ## Build optimized daemon binary and package
+	@printf "$(YELLOW)Building release daemon...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/daemon
+	cargo build --release -p daemon
+	cp $(BUILD_DIR)/release/remoshell-daemon $(ARTIFACTS_DIR)/daemon/remoshell-linux-x86_64
+	@printf "$(GREEN)Daemon release built: $(ARTIFACTS_DIR)/daemon/remoshell-linux-x86_64$(NC)\n"
+
+release-web: ## Build web assets for production
+	@printf "$(YELLOW)Building release web assets...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/web
+	cd $(ROOT_DIR)/client && npm run build
+	cp -r $(ROOT_DIR)/client/dist/* $(ARTIFACTS_DIR)/web/
+	@printf "$(GREEN)Web release built: $(ARTIFACTS_DIR)/web/$(NC)\n"
+
+release-desktop: ## Build desktop apps for all platforms
+	@printf "$(YELLOW)Building release desktop app...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/desktop
+	cd $(ROOT_DIR)/client && npm run tauri build
+	@printf "$(GREEN)Desktop release built (check client/src-tauri/target/release/bundle/)$(NC)\n"
+
+release-android: ## Build signed APK for Android
+	@printf "$(YELLOW)Building release Android APK...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/android
+	cd $(ROOT_DIR)/client && npm run tauri android build -- --apk
+	find $(ROOT_DIR)/client/src-tauri/gen/android -name "*.apk" -exec cp {} $(ARTIFACTS_DIR)/android/ \;
+	@printf "$(GREEN)Android release built: $(ARTIFACTS_DIR)/android/$(NC)\n"
+
+# Cross-compilation targets (requires cross-rs or appropriate toolchains)
+release-cross: release-daemon-macos-x86 release-daemon-macos-arm release-daemon-windows ## Build daemon for all platforms
+	@printf "$(GREEN)Cross-compilation complete$(NC)\n"
+
+release-daemon-macos-x86: ## Build daemon for macOS x86_64
+	@printf "$(YELLOW)Building daemon for macOS x86_64...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/daemon
+	cross build --release -p daemon --target x86_64-apple-darwin
+	cp $(BUILD_DIR)/x86_64-apple-darwin/release/remoshell-daemon $(ARTIFACTS_DIR)/daemon/remoshell-macos-x86_64
+	@printf "$(GREEN)macOS x86_64 daemon built$(NC)\n"
+
+release-daemon-macos-arm: ## Build daemon for macOS ARM64
+	@printf "$(YELLOW)Building daemon for macOS ARM64...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/daemon
+	cross build --release -p daemon --target aarch64-apple-darwin
+	cp $(BUILD_DIR)/aarch64-apple-darwin/release/remoshell-daemon $(ARTIFACTS_DIR)/daemon/remoshell-macos-aarch64
+	@printf "$(GREEN)macOS ARM64 daemon built$(NC)\n"
+
+release-daemon-windows: ## Build daemon for Windows x86_64
+	@printf "$(YELLOW)Building daemon for Windows x86_64...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/daemon
+	cross build --release -p daemon --target x86_64-pc-windows-gnu
+	cp $(BUILD_DIR)/x86_64-pc-windows-gnu/release/remoshell-daemon.exe $(ARTIFACTS_DIR)/daemon/remoshell-windows-x86_64.exe
+	@printf "$(GREEN)Windows x86_64 daemon built$(NC)\n"
+
+# =============================================================================
+# Package Targets (Platform-specific packaging)
+# =============================================================================
+
+package-linux: release-daemon ## Create Linux distribution package
+	@printf "$(YELLOW)Creating Linux package...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/packages/linux
+	cp $(ARTIFACTS_DIR)/daemon/remoshell-linux-x86_64 $(ARTIFACTS_DIR)/packages/linux/
+	cd $(ARTIFACTS_DIR)/packages/linux && tar -czvf remoshell-linux-x86_64.tar.gz remoshell-linux-x86_64
+	@printf "$(GREEN)Linux package created: $(ARTIFACTS_DIR)/packages/linux/remoshell-linux-x86_64.tar.gz$(NC)\n"
+
+package-macos: release-daemon-macos-x86 release-daemon-macos-arm ## Create macOS distribution packages
+	@printf "$(YELLOW)Creating macOS packages...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/packages/macos
+	cp $(ARTIFACTS_DIR)/daemon/remoshell-macos-x86_64 $(ARTIFACTS_DIR)/packages/macos/
+	cp $(ARTIFACTS_DIR)/daemon/remoshell-macos-aarch64 $(ARTIFACTS_DIR)/packages/macos/
+	cd $(ARTIFACTS_DIR)/packages/macos && tar -czvf remoshell-macos-x86_64.tar.gz remoshell-macos-x86_64
+	cd $(ARTIFACTS_DIR)/packages/macos && tar -czvf remoshell-macos-aarch64.tar.gz remoshell-macos-aarch64
+	@printf "$(GREEN)macOS packages created: $(ARTIFACTS_DIR)/packages/macos/$(NC)\n"
+
+package-windows: release-daemon-windows ## Create Windows distribution package
+	@printf "$(YELLOW)Creating Windows package...$(NC)\n"
+	mkdir -p $(ARTIFACTS_DIR)/packages/windows
+	cp $(ARTIFACTS_DIR)/daemon/remoshell-windows-x86_64.exe $(ARTIFACTS_DIR)/packages/windows/
+	cd $(ARTIFACTS_DIR)/packages/windows && zip remoshell-windows-x86_64.zip remoshell-windows-x86_64.exe
+	@printf "$(GREEN)Windows package created: $(ARTIFACTS_DIR)/packages/windows/remoshell-windows-x86_64.zip$(NC)\n"
