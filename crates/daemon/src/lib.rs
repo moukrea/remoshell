@@ -64,6 +64,7 @@
 //! - [`session`]: PTY session creation and management
 //! - [`devices`]: Device trust store
 //! - [`files`]: File browsing and transfer
+//! - [`ipc`]: Unix Domain Socket IPC for CLI-daemon communication
 //! - [`network`]: WebRTC and QUIC connection handlers
 //! - [`router`]: Message routing to handlers
 //! - [`ui`]: TUI, QR code generation, systemd integration
@@ -72,6 +73,7 @@
 pub mod config;
 pub mod devices;
 pub mod files;
+pub mod ipc;
 pub mod network;
 pub mod orchestrator;
 pub mod router;
