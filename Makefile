@@ -39,7 +39,9 @@ DEV_SERVER_PORT ?= 5173
 ROOT_DIR := $(shell pwd)
 BUILD_DIR := $(ROOT_DIR)/target
 DIST_DIR := $(ROOT_DIR)/client/dist
-DAEMON_BIN := $(BUILD_DIR)/$(PROFILE)/remoshell
+DAEMON_BIN := $(BUILD_DIR)/$(PROFILE)/remoshell-daemon
+DESKTOP_BIN := $(BUILD_DIR)/$(PROFILE)/remoshell-desktop
+WEB_DIST := $(ROOT_DIR)/client/dist
 
 # Check if command exists
 define check_cmd
@@ -162,3 +164,54 @@ check-node: ## Verify Node.js installation
 	@printf "  node: $$(node --version)\n"
 	@printf "  npm: $$(npm --version)\n"
 	@printf "$(GREEN)Node.js OK$(NC)\n"
+
+# =============================================================================
+# Build Targets
+# =============================================================================
+
+.PHONY: build build-daemon build-protocol build-tauri-client build-signaling
+.PHONY: build-web build-desktop build-android build-all build-release
+
+build: build-daemon build-web ## Build daemon and web client (debug)
+	@printf "$(GREEN)Build complete$(NC)\n"
+
+build-release: ## Build all components in release mode
+	$(MAKE) build-all PROFILE=release
+
+build-all: build-daemon build-web build-desktop ## Build all components
+	@printf "$(GREEN)All components built$(NC)\n"
+
+build-daemon: ## Build the daemon binary
+	@printf "$(YELLOW)Building daemon ($(PROFILE))...$(NC)\n"
+	cargo build -p daemon $(RELEASE_FLAG)
+	@printf "$(GREEN)Daemon built: $(DAEMON_BIN)$(NC)\n"
+
+build-protocol: ## Build the protocol crate
+	@printf "$(YELLOW)Building protocol crate...$(NC)\n"
+	cargo build -p protocol $(RELEASE_FLAG)
+	@printf "$(GREEN)Protocol crate built$(NC)\n"
+
+build-tauri-client: ## Build the Tauri client library
+	@printf "$(YELLOW)Building tauri-client crate...$(NC)\n"
+	cargo build -p tauri-client $(RELEASE_FLAG)
+	@printf "$(GREEN)Tauri client crate built$(NC)\n"
+
+build-signaling: ## Build the signaling worker
+	@printf "$(YELLOW)Building signaling worker...$(NC)\n"
+	cd $(ROOT_DIR)/signaling-worker && npm run build
+	@printf "$(GREEN)Signaling worker built$(NC)\n"
+
+build-web: ## Build the web frontend
+	@printf "$(YELLOW)Building web frontend...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run build
+	@printf "$(GREEN)Web frontend built: $(DIST_DIR)$(NC)\n"
+
+build-desktop: build-tauri-client ## Build the Tauri desktop app
+	@printf "$(YELLOW)Building desktop app ($(PROFILE))...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run tauri build $(if $(filter release,$(PROFILE)),,-- --debug)
+	@printf "$(GREEN)Desktop app built$(NC)\n"
+
+build-android: build-tauri-client ## Build the Android app
+	@printf "$(YELLOW)Building Android app...$(NC)\n"
+	cd $(ROOT_DIR)/client && npm run tauri android build
+	@printf "$(GREEN)Android app built$(NC)\n"
