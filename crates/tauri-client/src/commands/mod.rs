@@ -156,7 +156,7 @@ pub async fn connect_quic(
     state: tauri::State<'_, AppState>,
     request: ConnectRequest,
 ) -> CommandResult<ConnectResponse> {
-    let guard = state.quic_manager.read().await;
+    let guard = state.inner().quic_manager.read().await;
     let manager = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "QUIC manager not initialized".to_string(),
@@ -213,7 +213,7 @@ pub struct DisconnectResponse {
 pub async fn disconnect_quic(
     state: tauri::State<'_, AppState>,
 ) -> CommandResult<DisconnectResponse> {
-    let guard = state.quic_manager.read().await;
+    let guard = state.inner().quic_manager.read().await;
     let manager = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "QUIC manager not initialized".to_string(),
@@ -251,7 +251,7 @@ pub async fn send_quic_data(
     state: tauri::State<'_, AppState>,
     request: SendDataRequest,
 ) -> CommandResult<SendDataResponse> {
-    let guard = state.quic_manager.read().await;
+    let guard = state.inner().quic_manager.read().await;
     let manager = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "QUIC manager not initialized".to_string(),
@@ -291,7 +291,7 @@ pub struct ConnectionStatusResponse {
 pub async fn get_connection_status(
     state: tauri::State<'_, AppState>,
 ) -> CommandResult<ConnectionStatusResponse> {
-    let guard = state.quic_manager.read().await;
+    let guard = state.inner().quic_manager.read().await;
     let manager = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "QUIC manager not initialized".to_string(),
@@ -380,7 +380,7 @@ pub fn has_device_keys() -> CommandResult<bool> {
 pub async fn get_paired_devices(
     state: tauri::State<'_, AppState>,
 ) -> CommandResult<Vec<PairedDevice>> {
-    let guard = state.database.read().await;
+    let guard = state.inner().database.read().await;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -409,7 +409,7 @@ pub async fn store_paired_device(
     state: tauri::State<'_, AppState>,
     request: StorePairedDeviceRequest,
 ) -> CommandResult<PairedDevice> {
-    let guard = state.database.read().await;
+    let guard = state.inner().database.read().await;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -449,7 +449,7 @@ pub async fn remove_paired_device(
     state: tauri::State<'_, AppState>,
     device_id: String,
 ) -> CommandResult<RemoveDeviceResponse> {
-    let guard = state.database.read().await;
+    let guard = state.inner().database.read().await;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -466,7 +466,7 @@ pub async fn get_paired_device(
     state: tauri::State<'_, AppState>,
     device_id: String,
 ) -> CommandResult<Option<PairedDevice>> {
-    let guard = state.database.read().await;
+    let guard = state.inner().database.read().await;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -482,7 +482,7 @@ pub async fn update_device_last_seen(
     state: tauri::State<'_, AppState>,
     device_id: String,
 ) -> CommandResult<bool> {
-    let guard = state.database.read().await;
+    let guard = state.inner().database.read().await;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -598,7 +598,7 @@ pub async fn initialize_app(
     request: InitRequest,
 ) -> CommandResult<InitResponse> {
     // Initialize the database
-    state.init_database(&request.database_path)?;
+    state.inner().init_database(&request.database_path)?;
 
     // Create QUIC configuration
     let config = if let Some(url) = &request.relay_url {
@@ -612,10 +612,10 @@ pub async fn initialize_app(
     };
 
     // Initialize the QUIC manager
-    state.init_quic(config).await?;
+    state.inner().init_quic(config).await?;
 
     // Get the local node ID
-    let guard = state.quic_manager.read().await;
+    let guard = state.inner().quic_manager.read().await;
     let manager = guard.as_ref().ok_or_else(|| CommandError {
         code: "INIT_FAILED".to_string(),
         message: "QUIC manager initialization failed".to_string(),
@@ -685,8 +685,8 @@ mod tests {
     fn test_app_state_creation() {
         let state = AppState::new();
         // Verify state is created with None values
-        assert!(state.quic_manager.try_read().is_ok());
-        assert!(state.database.try_read().is_ok());
+        assert!(state.inner().quic_manager.try_read().is_ok());
+        assert!(state.inner().database.try_read().is_ok());
     }
 
     #[test]
