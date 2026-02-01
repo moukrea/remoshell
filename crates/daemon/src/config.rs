@@ -8,6 +8,20 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Configuration validation errors.
+#[derive(Debug, Error, PartialEq)]
+pub enum ConfigError {
+    #[error("max_sessions must be between 1 and 1000, got {0}")]
+    InvalidMaxSessions(usize),
+
+    #[error("approval_timeout must be between 0 and 3600 seconds, got {0}")]
+    InvalidApprovalTimeout(u64),
+
+    #[error("max_size must be greater than 0, got {0}")]
+    InvalidMaxSize(u64),
+}
 
 /// Main configuration structure for the RemoShell daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -183,6 +197,28 @@ impl Config {
                 self.daemon.log_level = level;
             }
         }
+    }
+
+    /// Validate the configuration values.
+    ///
+    /// Returns an error if any configuration value is outside the valid range.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // Validate max_sessions: 1-1000
+        if self.session.max_sessions < 1 || self.session.max_sessions > 1000 {
+            return Err(ConfigError::InvalidMaxSessions(self.session.max_sessions));
+        }
+
+        // Validate approval_timeout: 0-3600
+        if self.security.approval_timeout > 3600 {
+            return Err(ConfigError::InvalidApprovalTimeout(self.security.approval_timeout));
+        }
+
+        // Validate max_size: > 0
+        if self.file.max_size == 0 {
+            return Err(ConfigError::InvalidMaxSize(self.file.max_size));
+        }
+
+        Ok(())
     }
 
     /// Load configuration from a file.
@@ -703,5 +739,76 @@ approval_timeout = 0
 
         // Should NOT be overridden (env var not set)
         assert_eq!(config.daemon.log_level, original_level);
+    }
+
+    #[test]
+    fn test_validate_default_config() {
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_max_sessions_too_low() {
+        let mut config = Config::default();
+        config.session.max_sessions = 0;
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidMaxSessions(0))
+        );
+    }
+
+    #[test]
+    fn test_validate_max_sessions_too_high() {
+        let mut config = Config::default();
+        config.session.max_sessions = 1001;
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidMaxSessions(1001))
+        );
+    }
+
+    #[test]
+    fn test_validate_approval_timeout_too_high() {
+        let mut config = Config::default();
+        config.security.approval_timeout = 3601;
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidApprovalTimeout(3601))
+        );
+    }
+
+    #[test]
+    fn test_validate_max_size_zero() {
+        let mut config = Config::default();
+        config.file.max_size = 0;
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidMaxSize(0))
+        );
+    }
+
+    #[test]
+    fn test_validate_boundary_values() {
+        let mut config = Config::default();
+
+        // Test boundary: max_sessions = 1 (valid)
+        config.session.max_sessions = 1;
+        assert!(config.validate().is_ok());
+
+        // Test boundary: max_sessions = 1000 (valid)
+        config.session.max_sessions = 1000;
+        assert!(config.validate().is_ok());
+
+        // Test boundary: approval_timeout = 0 (valid - no timeout)
+        config.security.approval_timeout = 0;
+        assert!(config.validate().is_ok());
+
+        // Test boundary: approval_timeout = 3600 (valid)
+        config.security.approval_timeout = 3600;
+        assert!(config.validate().is_ok());
+
+        // Test boundary: max_size = 1 (valid)
+        config.file.max_size = 1;
+        assert!(config.validate().is_ok());
     }
 }

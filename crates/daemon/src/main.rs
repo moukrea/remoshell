@@ -137,6 +137,9 @@ async fn main() -> anyhow::Result<()> {
     // Apply environment variable overrides
     config.apply_env_overrides();
 
+    // Validate configuration
+    config.validate()?;
+
     // Handle commands
     match cli.command {
         Commands::Start { tui, systemd } => {
