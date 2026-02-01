@@ -180,6 +180,9 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
 
+      - name: Install Android build-tools for signing
+        run: sdkmanager "build-tools;29.0.3"
+
       - name: Sign APK (if secrets available)
         if: ${{ env.ANDROID_SIGNING_KEY != '' }}
         uses: r0adkll/sign-android-release@v1
