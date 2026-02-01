@@ -282,10 +282,13 @@ impl WebSocketSignalingClient {
             let mut state = self.state.write().await;
             state.connection_state = new_state;
         }
-        let _ = self
+        if let Err(e) = self
             .event_tx
             .send(SignalingEvent::StateChanged(new_state))
-            .await;
+            .await
+        {
+            tracing::warn!(error = %e, state = ?new_state, "Failed to send StateChanged event - receiver may be dropped");
+        }
     }
 
     /// Sends a message to the signaling server.
@@ -311,34 +314,45 @@ impl WebSocketSignalingClient {
                     let mut state = self.state.write().await;
                     state.current_room = Some(room_id.clone());
                 }
-                let _ = self
+                if let Err(e) = self
                     .event_tx
-                    .send(SignalingEvent::RoomJoined { room_id })
-                    .await;
+                    .send(SignalingEvent::RoomJoined {
+                        room_id: room_id.clone(),
+                    })
+                    .await
+                {
+                    tracing::warn!(error = %e, room_id = %room_id, "Failed to send RoomJoined event - receiver may be dropped");
+                }
             }
             SignalingMessage::Offer {
                 sdp,
                 target_device_id,
             } => {
-                let _ = self
+                if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::OfferReceived {
                         sdp,
                         from_device_id: target_device_id,
                     })
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "Failed to send OfferReceived event - receiver may be dropped");
+                }
             }
             SignalingMessage::Answer {
                 sdp,
                 target_device_id,
             } => {
-                let _ = self
+                if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::AnswerReceived {
                         sdp,
                         from_device_id: target_device_id,
                     })
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "Failed to send AnswerReceived event - receiver may be dropped");
+                }
             }
             SignalingMessage::Ice {
                 candidate,
@@ -346,7 +360,7 @@ impl WebSocketSignalingClient {
                 sdp_mline_index,
                 target_device_id,
             } => {
-                let _ = self
+                if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::IceCandidateReceived {
                         candidate,
@@ -354,22 +368,43 @@ impl WebSocketSignalingClient {
                         sdp_mline_index,
                         from_device_id: target_device_id,
                     })
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "Failed to send IceCandidateReceived event - receiver may be dropped");
+                }
             }
             SignalingMessage::PeerJoined { device_id } => {
-                let _ = self
+                if let Err(e) = self
                     .event_tx
-                    .send(SignalingEvent::PeerJoined { device_id })
-                    .await;
+                    .send(SignalingEvent::PeerJoined {
+                        device_id: device_id.clone(),
+                    })
+                    .await
+                {
+                    tracing::warn!(error = %e, device_id = %device_id, "Failed to send PeerJoined event - receiver may be dropped");
+                }
             }
             SignalingMessage::PeerLeft { device_id } => {
-                let _ = self
+                if let Err(e) = self
                     .event_tx
-                    .send(SignalingEvent::PeerLeft { device_id })
-                    .await;
+                    .send(SignalingEvent::PeerLeft {
+                        device_id: device_id.clone(),
+                    })
+                    .await
+                {
+                    tracing::warn!(error = %e, device_id = %device_id, "Failed to send PeerLeft event - receiver may be dropped");
+                }
             }
             SignalingMessage::Error { message } => {
-                let _ = self.event_tx.send(SignalingEvent::Error { message }).await;
+                if let Err(e) = self
+                    .event_tx
+                    .send(SignalingEvent::Error {
+                        message: message.clone(),
+                    })
+                    .await
+                {
+                    tracing::warn!(error = %e, signaling_error = %message, "Failed to send Error event - receiver may be dropped");
+                }
             }
             _ => {
                 // Ignore other message types (Join, Leave are outgoing only)
