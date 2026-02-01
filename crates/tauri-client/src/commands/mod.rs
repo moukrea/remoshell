@@ -13,7 +13,7 @@ use crate::quic::{ChannelType, ConnectionState, QuicConfig, QuicManager};
 use crate::storage::{Database, DatabaseError, KeychainError, KeychainManager, PairedDevice};
 use iroh::NodeAddr;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 
 // ============================================================================
@@ -79,8 +79,9 @@ pub type CommandResult<T> = Result<T, CommandError>;
 pub struct AppState {
     /// The QUIC connection manager.
     pub quic_manager: Arc<RwLock<Option<QuicManager>>>,
-    /// The SQLite database for paired devices.
-    pub database: Arc<RwLock<Option<Database>>>,
+    /// The SQLite database for paired devices (uses std::sync::Mutex because
+    /// rusqlite::Connection is Send but not Sync).
+    pub database: Arc<Mutex<Option<Database>>>,
 }
 
 impl AppState {
@@ -88,7 +89,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             quic_manager: Arc::new(RwLock::new(None)),
-            database: Arc::new(RwLock::new(None)),
+            database: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -103,16 +104,12 @@ impl AppState {
     /// Initialize the database at the given path.
     pub fn init_database(&self, path: &str) -> CommandResult<()> {
         let db = Database::open(path)?;
-        // Use try_write to avoid deadlock in sync context
-        if let Ok(mut guard) = self.database.try_write() {
-            *guard = Some(db);
-            Ok(())
-        } else {
-            Err(CommandError {
-                code: "DATABASE_LOCK_ERROR".to_string(),
-                message: "Failed to acquire database lock".to_string(),
-            })
-        }
+        let mut guard = self.database.lock().map_err(|_| CommandError {
+            code: "DATABASE_LOCK_ERROR".to_string(),
+            message: "Failed to acquire database lock".to_string(),
+        })?;
+        *guard = Some(db);
+        Ok(())
     }
 }
 
@@ -380,7 +377,10 @@ pub fn has_device_keys() -> CommandResult<bool> {
 pub async fn get_paired_devices(
     state: tauri::State<'_, AppState>,
 ) -> CommandResult<Vec<PairedDevice>> {
-    let guard = state.inner().database.read().await;
+    let guard = state.inner().database.lock().map_err(|_| CommandError {
+        code: "DATABASE_LOCK_ERROR".to_string(),
+        message: "Failed to acquire database lock".to_string(),
+    })?;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -409,7 +409,10 @@ pub async fn store_paired_device(
     state: tauri::State<'_, AppState>,
     request: StorePairedDeviceRequest,
 ) -> CommandResult<PairedDevice> {
-    let guard = state.inner().database.read().await;
+    let guard = state.inner().database.lock().map_err(|_| CommandError {
+        code: "DATABASE_LOCK_ERROR".to_string(),
+        message: "Failed to acquire database lock".to_string(),
+    })?;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -449,7 +452,10 @@ pub async fn remove_paired_device(
     state: tauri::State<'_, AppState>,
     device_id: String,
 ) -> CommandResult<RemoveDeviceResponse> {
-    let guard = state.inner().database.read().await;
+    let guard = state.inner().database.lock().map_err(|_| CommandError {
+        code: "DATABASE_LOCK_ERROR".to_string(),
+        message: "Failed to acquire database lock".to_string(),
+    })?;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -466,7 +472,10 @@ pub async fn get_paired_device(
     state: tauri::State<'_, AppState>,
     device_id: String,
 ) -> CommandResult<Option<PairedDevice>> {
-    let guard = state.inner().database.read().await;
+    let guard = state.inner().database.lock().map_err(|_| CommandError {
+        code: "DATABASE_LOCK_ERROR".to_string(),
+        message: "Failed to acquire database lock".to_string(),
+    })?;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -482,7 +491,10 @@ pub async fn update_device_last_seen(
     state: tauri::State<'_, AppState>,
     device_id: String,
 ) -> CommandResult<bool> {
-    let guard = state.inner().database.read().await;
+    let guard = state.inner().database.lock().map_err(|_| CommandError {
+        code: "DATABASE_LOCK_ERROR".to_string(),
+        message: "Failed to acquire database lock".to_string(),
+    })?;
     let db = guard.as_ref().ok_or_else(|| CommandError {
         code: "NOT_INITIALIZED".to_string(),
         message: "Database not initialized".to_string(),
@@ -685,8 +697,8 @@ mod tests {
     fn test_app_state_creation() {
         let state = AppState::new();
         // Verify state is created with None values
-        assert!(state.inner().quic_manager.try_read().is_ok());
-        assert!(state.inner().database.try_read().is_ok());
+        assert!(state.quic_manager.try_read().is_ok());
+        assert!(state.database.lock().is_ok());
     }
 
     #[test]
