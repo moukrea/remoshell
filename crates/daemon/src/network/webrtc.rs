@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use protocol::crypto::DeviceIdentity;
 use protocol::error::{ProtocolError, Result};
@@ -34,6 +35,10 @@ pub const DEFAULT_STUN_SERVERS: &[&str] = &[
     "stun:stun.l.google.com:19302",
     "stun:stun1.l.google.com:19302",
 ];
+
+/// Timeout for Noise protocol handshake operations.
+/// Each recv operation during handshake will timeout after this duration.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// ICE server configuration.
 #[derive(Debug, Clone)]
@@ -472,7 +477,16 @@ impl WebRtcConnectionHandler {
         self.send_raw(ChannelType::Control, &msg1).await?;
 
         // Message 2: Receive <- e, ee, s, es
-        let msg2 = self.recv_raw(ChannelType::Control).await?;
+        let msg2 = tokio::time::timeout(HANDSHAKE_TIMEOUT, self.recv_raw(ChannelType::Control))
+            .await
+            .map_err(|_| {
+                tracing::error!("Noise handshake timed out waiting for message 2 (initiator)");
+                ProtocolError::HandshakeFailed("Handshake timeout".into())
+            })?
+            .map_err(|e| {
+                tracing::error!("Failed to receive handshake message 2: {}", e);
+                ProtocolError::HandshakeFailed(e.to_string())
+            })?;
         noise.read_handshake_message(&msg2)?;
 
         // Message 3: Send -> s, se
@@ -502,7 +516,16 @@ impl WebRtcConnectionHandler {
         let mut noise = NoiseSession::new_responder(&self.identity)?;
 
         // Message 1: Receive -> e
-        let msg1 = self.recv_raw(ChannelType::Control).await?;
+        let msg1 = tokio::time::timeout(HANDSHAKE_TIMEOUT, self.recv_raw(ChannelType::Control))
+            .await
+            .map_err(|_| {
+                tracing::error!("Noise handshake timed out waiting for message 1 (responder)");
+                ProtocolError::HandshakeFailed("Handshake timeout".into())
+            })?
+            .map_err(|e| {
+                tracing::error!("Failed to receive handshake message 1: {}", e);
+                ProtocolError::HandshakeFailed(e.to_string())
+            })?;
         noise.read_handshake_message(&msg1)?;
 
         // Message 2: Send <- e, ee, s, es
@@ -510,7 +533,16 @@ impl WebRtcConnectionHandler {
         self.send_raw(ChannelType::Control, &msg2).await?;
 
         // Message 3: Receive -> s, se
-        let msg3 = self.recv_raw(ChannelType::Control).await?;
+        let msg3 = tokio::time::timeout(HANDSHAKE_TIMEOUT, self.recv_raw(ChannelType::Control))
+            .await
+            .map_err(|_| {
+                tracing::error!("Noise handshake timed out waiting for message 3 (responder)");
+                ProtocolError::HandshakeFailed("Handshake timeout".into())
+            })?
+            .map_err(|e| {
+                tracing::error!("Failed to receive handshake message 3: {}", e);
+                ProtocolError::HandshakeFailed(e.to_string())
+            })?;
         noise.read_handshake_message(&msg3)?;
 
         // Store the peer's public key
