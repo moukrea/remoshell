@@ -60,6 +60,8 @@ pub enum TuiEvent {
     SessionCreated {
         session_id: String,
         device_id: String,
+        pid: Option<u32>,
+        size: (u16, u16),
     },
     /// A session was terminated.
     SessionTerminated { session_id: String },
@@ -172,6 +174,12 @@ pub struct SessionInfo {
     pub device_id: String,
     /// Terminal size (cols x rows).
     pub size: (u16, u16),
+    /// Process ID of the shell.
+    pub pid: Option<u32>,
+    /// When the session was started.
+    pub started_at: Instant,
+    /// Number of connected subscribers.
+    pub subscriber_count: usize,
 }
 
 /// Information about a pending approval request.
@@ -555,11 +563,16 @@ impl TuiApp {
             TuiEvent::SessionCreated {
                 session_id,
                 device_id,
+                pid,
+                size,
             } => {
                 self.sessions.push(SessionInfo {
                     id: session_id,
                     device_id,
-                    size: (80, 24),
+                    size,
+                    pid,
+                    started_at: Instant::now(),
+                    subscriber_count: 1, // Initial subscriber (the creator)
                 });
             }
             TuiEvent::SessionTerminated { session_id } => {
@@ -782,17 +795,26 @@ impl TuiApp {
         sessions: &[SessionInfo],
         list_state: &mut ListState,
     ) {
+        // Split area: list on left, details on right
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50), // Session list
+                Constraint::Percentage(50), // Session details
+            ])
+            .split(area);
+
+        // Render the session list
         let items: Vec<ListItem> = sessions
             .iter()
             .map(|s| {
                 let content = Line::from(vec![
                     Span::styled(&s.id[..8.min(s.id.len())], Style::default().fg(Color::Cyan)),
-                    Span::raw(" | Device: "),
+                    Span::raw(" | "),
                     Span::styled(
                         &s.device_id[..8.min(s.device_id.len())],
                         Style::default().fg(Color::Yellow),
                     ),
-                    Span::raw(format!(" | {}x{}", s.size.0, s.size.1)),
                 ]);
                 ListItem::new(content)
             })
@@ -811,7 +833,87 @@ impl TuiApp {
             )
             .highlight_symbol("> ");
 
-        frame.render_stateful_widget(list, area, list_state);
+        frame.render_stateful_widget(list, chunks[0], list_state);
+
+        // Render the session details
+        Self::render_session_detail(frame, chunks[1], sessions, list_state.selected());
+    }
+
+    /// Renders the session detail panel.
+    fn render_session_detail(
+        frame: &mut Frame,
+        area: Rect,
+        sessions: &[SessionInfo],
+        selected_index: Option<usize>,
+    ) {
+        let session = selected_index.and_then(|i| sessions.get(i));
+
+        let content = if let Some(s) = session {
+            let uptime = s.started_at.elapsed();
+            let uptime_str = format_duration(uptime.as_secs());
+
+            vec![
+                Line::from(vec![
+                    Span::styled("Session ID: ", Style::default().fg(Color::Gray)),
+                    Span::styled(&s.id, Style::default().fg(Color::Cyan)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Device: ", Style::default().fg(Color::Gray)),
+                    Span::styled(&s.device_id, Style::default().fg(Color::Yellow)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("PID: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        s.pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string()),
+                        Style::default().fg(Color::White),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Terminal Size: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        format!("{} x {}", s.size.0, s.size.1),
+                        Style::default().fg(Color::White),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Subscribers: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        s.subscriber_count.to_string(),
+                        Style::default().fg(Color::Magenta),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Uptime: ", Style::default().fg(Color::Gray)),
+                    Span::styled(uptime_str, Style::default().fg(Color::Green)),
+                ]),
+            ]
+        } else {
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  No session selected", Style::default().fg(Color::DarkGray)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Use j/k or Up/Down to select", Style::default().fg(Color::DarkGray)),
+                ]),
+            ]
+        };
+
+        let paragraph = Paragraph::new(content)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Session Details "),
+            )
+            .style(Style::default().fg(Color::White));
+
+        frame.render_widget(paragraph, area);
     }
 
     /// Renders the devices tab content.
@@ -1315,6 +1417,8 @@ mod tests {
         let _ = TuiEvent::SessionCreated {
             session_id: "sess1".to_string(),
             device_id: "dev1".to_string(),
+            pid: Some(1234),
+            size: (80, 24),
         };
         let _ = TuiEvent::SessionTerminated {
             session_id: "sess1".to_string(),
@@ -1356,10 +1460,16 @@ mod tests {
             id: "session-456".to_string(),
             device_id: "device-123".to_string(),
             size: (80, 24),
+            pid: Some(9876),
+            started_at: Instant::now(),
+            subscriber_count: 2,
         };
         assert_eq!(session.id, "session-456");
         assert_eq!(session.device_id, "device-123");
         assert_eq!(session.size, (80, 24));
+        assert_eq!(session.pid, Some(9876));
+        assert!(session.started_at.elapsed().as_secs() < 1);
+        assert_eq!(session.subscriber_count, 2);
     }
 
     #[test]
@@ -1471,6 +1581,8 @@ mod tests {
         tx.send(TuiEvent::SessionCreated {
             session_id: "sess1".to_string(),
             device_id: "dev1".to_string(),
+            pid: Some(1234),
+            size: (80, 24),
         })
         .await
         .unwrap();
