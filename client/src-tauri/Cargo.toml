@@ -1,5 +1,9 @@
 [package]
 name = "remoshell-app"
+# IMPORTANT: This version must stay in sync with the workspace version.
+# Do not modify manually - use scripts/bump-version.sh to update all versions.
+# CI will fail if this version differs from the workspace Cargo.toml.
+# See docs/VERSIONING.md for more information.
 version = "0.1.0"
 description = "RemoShell - Remote Shell Access Application"
 authors = ["RemoShell Contributors"]
