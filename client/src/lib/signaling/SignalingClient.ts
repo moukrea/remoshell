@@ -228,6 +228,8 @@ export interface SignalingClientConfig {
   reconnectBaseDelay?: number;
   /** Maximum delay for reconnection backoff in ms (default: 30000) */
   reconnectMaxDelay?: number;
+  /** Connection timeout in ms (default: 10000) */
+  connectionTimeout?: number;
 }
 
 /**
@@ -237,6 +239,7 @@ const DEFAULT_CONFIG = {
   maxReconnectAttempts: 5,
   reconnectBaseDelay: 1000,
   reconnectMaxDelay: 30000,
+  connectionTimeout: 10000,
 };
 
 /**
@@ -252,6 +255,7 @@ export class SignalingClient {
   private peerId: string | null = null;
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private connectionTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionalClose = false;
 
   constructor(config: SignalingClientConfig) {
@@ -360,8 +364,23 @@ export class SignalingClient {
 
     try {
       this.ws = new WebSocket(url);
+
+      // Set connection timeout
+      this.connectionTimer = setTimeout(() => {
+        if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+          console.warn(`[SignalingClient] Connection timeout after ${this.config.connectionTimeout}ms`);
+          this.connectionTimer = null;
+          this.ws.close();
+          this.scheduleReconnect();
+        }
+      }, this.config.connectionTimeout);
+
       this.setupWebSocketHandlers();
     } catch (error) {
+      if (this.connectionTimer) {
+        clearTimeout(this.connectionTimer);
+        this.connectionTimer = null;
+      }
       this.handleConnectionError(error);
     }
   }
@@ -373,6 +392,11 @@ export class SignalingClient {
     if (!this.ws) return;
 
     this.ws.onopen = () => {
+      // Clear connection timeout on successful connection
+      if (this.connectionTimer) {
+        clearTimeout(this.connectionTimer);
+        this.connectionTimer = null;
+      }
       // Connection established, waiting for join message from server
     };
 
@@ -381,6 +405,11 @@ export class SignalingClient {
     };
 
     this.ws.onclose = (event: CloseEvent) => {
+      // Clear connection timeout if still pending
+      if (this.connectionTimer) {
+        clearTimeout(this.connectionTimer);
+        this.connectionTimer = null;
+      }
       this.handleClose(event);
     };
 
@@ -597,6 +626,11 @@ export class SignalingClient {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
+    }
+
+    if (this.connectionTimer) {
+      clearTimeout(this.connectionTimer);
+      this.connectionTimer = null;
     }
 
     if (this.ws) {
