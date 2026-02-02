@@ -7,6 +7,53 @@ on:
     branches: [main]
 
 jobs:
+  version-check:
+    name: Version Consistency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          # Extract versions from all locations
+          CARGO_VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          CLIENT_VERSION=$(jq -r '.version' client/package.json)
+          SIGNALING_VERSION=$(jq -r '.version' signaling/package.json)
+          TAURI_CARGO_VERSION=$(grep -m1 '^version = ' client/src-tauri/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          TAURI_CONF_VERSION=$(jq -r '.version' client/src-tauri/tauri.conf.json)
+
+          echo "Workspace Cargo.toml: $CARGO_VERSION"
+          echo "client/package.json: $CLIENT_VERSION"
+          echo "signaling/package.json: $SIGNALING_VERSION"
+          echo "client/src-tauri/Cargo.toml: $TAURI_CARGO_VERSION"
+          echo "client/src-tauri/tauri.conf.json: $TAURI_CONF_VERSION"
+
+          # Check all versions match
+          MISMATCH=false
+          if [[ "$CARGO_VERSION" != "$CLIENT_VERSION" ]]; then
+            echo "::error::Version mismatch: Cargo.toml ($CARGO_VERSION) != client/package.json ($CLIENT_VERSION)"
+            MISMATCH=true
+          fi
+          if [[ "$CARGO_VERSION" != "$SIGNALING_VERSION" ]]; then
+            echo "::error::Version mismatch: Cargo.toml ($CARGO_VERSION) != signaling/package.json ($SIGNALING_VERSION)"
+            MISMATCH=true
+          fi
+          if [[ "$CARGO_VERSION" != "$TAURI_CARGO_VERSION" ]]; then
+            echo "::error::Version mismatch: Cargo.toml ($CARGO_VERSION) != client/src-tauri/Cargo.toml ($TAURI_CARGO_VERSION)"
+            MISMATCH=true
+          fi
+          if [[ "$CARGO_VERSION" != "$TAURI_CONF_VERSION" ]]; then
+            echo "::error::Version mismatch: Cargo.toml ($CARGO_VERSION) != client/src-tauri/tauri.conf.json ($TAURI_CONF_VERSION)"
+            MISMATCH=true
+          fi
+
+          if [[ "$MISMATCH" == "true" ]]; then
+            echo "::error::Version mismatch detected! Run scripts/bump-version.sh to synchronize versions."
+            exit 1
+          fi
+
+          echo "All versions are consistent: $CARGO_VERSION"
+
   rust:
     runs-on: ubuntu-latest
     steps:
