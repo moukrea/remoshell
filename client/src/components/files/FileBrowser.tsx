@@ -598,7 +598,14 @@ const FileBrowser: Component<FileBrowserProps> = (props) => {
             role="alert"
             aria-live="assertive"
           >
-            Error: {store.state.error}
+            <span class="file-browser__error-message">Error: {store.state.error}</span>
+            <button
+              data-testid="file-retry"
+              class="file-browser__retry-button"
+              onClick={() => store.refresh()}
+            >
+              Retry
+            </button>
           </div>
         </Show>
 
