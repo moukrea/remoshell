@@ -203,12 +203,32 @@ const FilesView: Component = () => {
     // 4. Triggering browser download when complete
   };
 
-  const handleUpload = (files: File[]) => {
-    // Start upload transfers for each file
-    files.forEach(file => {
-      fileStore.startUpload(file, fileStore.state.currentPath);
-    });
-    // In a real implementation, this would trigger the actual upload via the connection
+  const handleUpload = async (files: File[]) => {
+    const orchestrator = getOrchestrator();
+
+    for (const file of files) {
+      // Start tracking the upload in the store
+      const transferId = fileStore.startUpload(file, fileStore.state.currentPath);
+
+      // Calculate destination path
+      const destPath = `${fileStore.state.currentPath}/${file.name}`.replace(/\/+/g, '/');
+
+      // Mark transfer as started
+      fileStore.setTransferStarted(transferId);
+
+      // Start the actual upload
+      try {
+        await orchestrator.uploadFile(file, destPath, (progress) => {
+          fileStore.updateTransferProgress(transferId, progress.bytesSent);
+        });
+
+        fileStore.completeTransfer(transferId);
+        // Refresh directory listing to show the uploaded file
+        fileStore.refresh();
+      } catch (error) {
+        fileStore.failTransfer(transferId, error instanceof Error ? error.message : 'Upload failed');
+      }
+    }
   };
 
   return (

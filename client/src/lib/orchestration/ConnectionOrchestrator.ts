@@ -24,6 +24,16 @@ import {
 export type DataReceivedHandler = (peerId: string, data: Uint8Array, channel: string) => void;
 
 /**
+ * Upload progress callback type
+ */
+export type UploadProgressCallback = (progress: { bytesSent: number; totalBytes: number }) => void;
+
+/**
+ * Chunk size for file uploads (64KB)
+ */
+const UPLOAD_CHUNK_SIZE = 64 * 1024;
+
+/**
  * Connection orchestrator state
  */
 export type OrchestratorState = 'idle' | 'initialized' | 'connected' | 'disconnected';
@@ -713,6 +723,105 @@ export class ConnectionOrchestrator {
     const encoded = encodeEnvelope(envelope);
 
     this.webrtc.sendData(peerId, encoded, 'files');
+  }
+
+  /**
+   * Send a file upload complete message to a peer.
+   */
+  private sendFileUploadComplete(path: string, checksum: Uint8Array): void {
+    const peerId = this.getFirstConnectedPeer();
+    if (!peerId || !this.webrtc) {
+      console.warn('[Orchestrator] Cannot send file upload complete: no connected peer');
+      return;
+    }
+
+    const message = Msg.FileUploadComplete({
+      path,
+      checksum,
+    });
+
+    const envelope = createEnvelope(++this.messageSequence, message);
+    const encoded = encodeEnvelope(envelope);
+
+    this.webrtc.sendData(peerId, encoded, 'files');
+  }
+
+  /**
+   * Upload a file to the remote daemon with chunked transfer and checksum verification.
+   *
+   * @param file - The File object to upload
+   * @param destPath - Destination path on the remote system
+   * @param onProgress - Optional callback for progress updates
+   */
+  async uploadFile(
+    file: File,
+    destPath: string,
+    onProgress?: UploadProgressCallback
+  ): Promise<void> {
+    const peerId = this.getFirstConnectedPeer();
+    if (!peerId || !this.webrtc) {
+      throw new Error('No connected peer');
+    }
+
+    console.log('[Orchestrator] Starting upload:', destPath, 'size:', file.size);
+
+    // Send upload start message
+    this.sendFileUploadStart(destPath, file.size, 0o644);
+
+    // Read file in chunks and send, while computing checksum
+    let offset = 0;
+    const hashChunks: Uint8Array[] = [];
+
+    while (offset < file.size) {
+      const end = Math.min(offset + UPLOAD_CHUNK_SIZE, file.size);
+      const blob = file.slice(offset, end);
+      const arrayBuffer = await blob.arrayBuffer();
+      const chunk = new Uint8Array(arrayBuffer);
+
+      // Store chunk for hash calculation
+      hashChunks.push(chunk);
+
+      // Send chunk to peer
+      this.sendFileUploadChunk(destPath, offset, chunk);
+
+      offset = end;
+
+      // Report progress
+      onProgress?.({ bytesSent: offset, totalBytes: file.size });
+
+      // Small delay for flow control to prevent overwhelming the data channel
+      if (offset < file.size) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    }
+
+    // Calculate SHA-256 checksum of the entire file
+    const checksum = await this.calculateChecksum(hashChunks);
+
+    // Send upload complete with checksum
+    this.sendFileUploadComplete(destPath, checksum);
+
+    console.log('[Orchestrator] Upload complete:', destPath);
+  }
+
+  /**
+   * Calculate SHA-256 checksum from an array of chunks using Web Crypto API.
+   */
+  private async calculateChecksum(chunks: Uint8Array[]): Promise<Uint8Array> {
+    // Calculate total size
+    const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+
+    // Combine all chunks into a single buffer
+    const combined = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    // Calculate SHA-256 hash using Web Crypto API
+    const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
+    return new Uint8Array(hashBuffer);
   }
 
   /**
