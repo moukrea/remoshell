@@ -270,6 +270,7 @@ const DevicesView: Component = () => {
   const [showPairing, setShowPairing] = createSignal(false);
   const [pairingError, setPairingError] = createSignal<string | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = createSignal<string | null>(null);
+  const [scannerKey, setScannerKey] = createSignal(0);
 
   const handleConnect = (deviceId: string) => {
     // Start connection process
@@ -351,20 +352,42 @@ const DevicesView: Component = () => {
         <div class="devices-pairing" data-testid="pairing-section">
           <h3>Pair a Device</h3>
 
-          {/* QR Scanner */}
-          <div class="pairing-scanner">
+          {/* QR Scanner - keyed by scannerKey to force re-mount on rescan */}
+          <div class="pairing-scanner" data-scanner-key={scannerKey()}>
             <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
               <Suspense fallback={<LoadingFallback />}>
-                <QRScanner
-                  onScan={(data) => handlePairingComplete(data)}
-                  onError={(err) => {
-                    console.error('[Pairing] Scan error:', err);
-                    setPairingError(err);
-                  }}
-                />
+                <Show when={scannerKey() >= 0} keyed>
+                  <QRScanner
+                    onScan={(data) => handlePairingComplete(data)}
+                    onError={(err) => {
+                      console.error('[Pairing] Scan error:', err);
+                      setPairingError(err);
+                    }}
+                  />
+                </Show>
               </Suspense>
             </ErrorBoundary>
           </div>
+
+          {/* Pairing error with scan again option */}
+          <Show when={pairingError()}>
+            <div class="pairing-error" data-testid="pairing-error">
+              <span class="pairing-error__message">{pairingError()}</span>
+              <Show when={pairingError()?.toLowerCase().includes('expired')}>
+                <button
+                  class="pairing-error__rescan-btn"
+                  data-testid="pairing-rescan"
+                  onClick={() => {
+                    setPairingError(null);
+                    // Increment key to force QRScanner re-mount and restart
+                    setScannerKey(k => k + 1);
+                  }}
+                >
+                  Scan again
+                </button>
+              </Show>
+            </div>
+          </Show>
 
           <div class="pairing-divider">
             <span>or enter code manually</span>
