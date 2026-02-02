@@ -55,6 +55,16 @@ export interface FileTransfer {
 }
 
 /**
+ * Download buffer for assembling file chunks
+ */
+export interface DownloadBuffer {
+  chunks: Map<number, Uint8Array>;
+  totalSize: number;
+  receivedSize: number;
+  fileName: string;
+}
+
+/**
  * File store state
  */
 export interface FileState {
@@ -204,6 +214,11 @@ function sortEntries(
 export function createFileStore() {
   const [state, setState] = createStore<FileState>(createInitialState());
   const [subscribers] = createSignal<Set<FileEventSubscriber>>(new Set());
+
+  // Download buffers for chunk assembly (not in reactive state since it's internal)
+  const downloadBuffers = new Map<string, DownloadBuffer>();
+  // Map from file path to transfer ID for looking up transfers by path
+  const pathToTransferId = new Map<string, string>();
 
   /**
    * Emit an event to all subscribers
@@ -400,6 +415,9 @@ export function createFileStore() {
       })
     );
 
+    // Track path to transfer ID mapping for chunk handling
+    pathToTransferId.set(filePath, transferId);
+
     emit({
       type: 'files:download',
       path: filePath,
@@ -555,6 +573,116 @@ export function createFileStore() {
   };
 
   /**
+   * Find transfer by file path
+   */
+  const findTransferByPath = (path: string, direction: TransferDirection): FileTransfer | null => {
+    const transferId = pathToTransferId.get(path);
+    if (!transferId) return null;
+    const transfer = state.transfers[transferId];
+    if (!transfer || transfer.direction !== direction) return null;
+    return transfer;
+  };
+
+  /**
+   * Fail a download transfer by path (for error handling)
+   */
+  const failDownloadByPath = (path: string, error: string): void => {
+    const transfer = findTransferByPath(path, 'download');
+    if (transfer) {
+      failTransfer(transfer.id, error);
+      // Clean up buffers
+      downloadBuffers.delete(transfer.id);
+      pathToTransferId.delete(path);
+    }
+  };
+
+  /**
+   * Assemble chunks into a complete file
+   */
+  const assembleChunks = (buffer: DownloadBuffer): Uint8Array => {
+    const result = new Uint8Array(buffer.totalSize);
+    const sortedOffsets = Array.from(buffer.chunks.keys()).sort((a, b) => a - b);
+
+    for (const offset of sortedOffsets) {
+      const chunk = buffer.chunks.get(offset);
+      if (chunk) {
+        result.set(chunk, offset);
+      }
+    }
+
+    return result;
+  };
+
+  /**
+   * Trigger browser download of assembled file data
+   */
+  const triggerBrowserDownload = (fileName: string, data: Uint8Array): void => {
+    // Create a new ArrayBuffer to ensure compatibility with Blob constructor
+    const arrayBuffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(arrayBuffer).set(data);
+    const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Receive a file chunk during download
+   */
+  const receiveChunk = (
+    path: string,
+    offset: number,
+    data: Uint8Array,
+    totalSize: number,
+    isLast: boolean
+  ): void => {
+    const transfer = findTransferByPath(path, 'download');
+    if (!transfer) {
+      console.warn('[FileStore] Received chunk for unknown transfer:', path);
+      return;
+    }
+
+    // Get or create download buffer
+    let buffer = downloadBuffers.get(transfer.id);
+    if (!buffer) {
+      buffer = {
+        chunks: new Map(),
+        totalSize,
+        receivedSize: 0,
+        fileName: transfer.fileName,
+      };
+      downloadBuffers.set(transfer.id, buffer);
+    }
+
+    // Store the chunk
+    buffer.chunks.set(offset, data);
+    buffer.receivedSize += data.length;
+
+    // Update progress
+    updateTransferProgress(transfer.id, buffer.receivedSize);
+
+    if (isLast) {
+      // Assemble the file
+      const assembled = assembleChunks(buffer);
+
+      // Trigger browser download
+      triggerBrowserDownload(buffer.fileName, assembled);
+
+      // Mark transfer as completed
+      completeTransfer(transfer.id);
+
+      // Clean up
+      downloadBuffers.delete(transfer.id);
+      pathToTransferId.delete(path);
+    }
+  };
+
+  /**
    * Get a transfer by ID
    */
   const getTransfer = (transferId: string): FileTransfer | null => {
@@ -642,6 +770,9 @@ export function createFileStore() {
     cancelTransfer,
     removeTransfer,
     clearCompletedTransfers,
+    receiveChunk,
+    findTransferByPath,
+    failDownloadByPath,
 
     // Sort/filter actions
     setSort,

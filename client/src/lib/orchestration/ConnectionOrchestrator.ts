@@ -430,16 +430,32 @@ export class ConnectionOrchestrator {
             data: Uint8Array;
             is_last: boolean;
           };
-          // Update transfer progress in store
-          // The store would need a method to handle incoming chunks
           console.log('[Orchestrator] Received file chunk:', chunkData.path, chunkData.offset, chunkData.is_last);
-          // For now, just log - full implementation would accumulate chunks and trigger browser download
+
+          // Pass chunk to file store for assembly and progress tracking
+          this.fileStore?.receiveChunk(
+            chunkData.path,
+            chunkData.offset,
+            chunkData.data,
+            chunkData.total_size,
+            chunkData.is_last
+          );
+
+          // Request next chunk if not the last one
+          if (!chunkData.is_last) {
+            const nextOffset = chunkData.offset + chunkData.data.length;
+            this.sendFileDownloadRequest(chunkData.path, nextOffset);
+          }
         }
 
         if (message.type === 'Error') {
-          const errorData = message.data as { message: string };
-          console.error('[Orchestrator] File operation error:', errorData.message);
+          const errorData = message.data as { code: string; message: string; context: string | null };
+          console.error('[Orchestrator] File operation error:', errorData.message, 'context:', errorData.context);
           this.fileStore?.setError(errorData.message);
+          // If this is a file operation error with a path context, fail the transfer
+          if (errorData.context) {
+            this.fileStore?.failDownloadByPath(errorData.context, errorData.message);
+          }
         }
       } catch (error) {
         console.error('[Orchestrator] Error processing file data:', error);

@@ -21,6 +21,9 @@ import type { XTermWrapperHandle } from './components/terminal/XTermWrapper';
 // FileBrowser is only needed when viewing files
 const FileBrowser = lazy(() => import('./components/files/FileBrowser'));
 
+// FileTransferProgress shows download/upload progress
+const FileTransferProgress = lazy(() => import('./components/files/FileTransferProgress'));
+
 // DeviceList and PairingCodeInput are lighter but still lazy-loaded
 const DeviceList = lazy(() => import('./components/devices/DeviceList'));
 const PairingCodeInput = lazy(() => import('./components/pairing/PairingCodeInput'));
@@ -188,9 +191,16 @@ const FilesView: Component = () => {
   });
 
   const handleDownload = (entry: FileEntry) => {
-    // Start a download transfer
-    fileStore.startDownload(entry.path, entry.name, entry.size);
-    // In a real implementation, this would trigger the actual download via the connection
+    // Start a download transfer - this emits 'files:download' event
+    // which the orchestrator listens to and initiates the actual download
+    const transferId = fileStore.startDownload(entry.path, entry.name, entry.size);
+    // Mark transfer as started (in_progress)
+    fileStore.setTransferStarted(transferId);
+    // The orchestrator handles:
+    // 1. Sending FileDownloadRequest to peer
+    // 2. Receiving FileDownloadChunk responses
+    // 3. Calling fileStore.receiveChunk() to track progress and assemble file
+    // 4. Triggering browser download when complete
   };
 
   const handleUpload = (files: File[]) => {
@@ -219,6 +229,11 @@ const FilesView: Component = () => {
               onUpload={handleUpload}
               class="files-browser"
             />
+          </Suspense>
+        </ErrorBoundary>
+        <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
+          <Suspense fallback={<LoadingFallback />}>
+            <FileTransferProgress showOnlyActive={false} maxItems={10} />
           </Suspense>
         </ErrorBoundary>
       </Show>
