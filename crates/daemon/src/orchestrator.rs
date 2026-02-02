@@ -31,6 +31,9 @@ use crate::session::{SessionManager, SessionManagerImpl};
 /// Default cleanup interval for sessions (in seconds).
 const SESSION_CLEANUP_INTERVAL_SECS: u64 = 60;
 
+/// Default cleanup interval for expired pending approvals (in seconds).
+const APPROVAL_CLEANUP_INTERVAL_SECS: u64 = 60;
+
 /// Daemon orchestrator state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrchestratorState {
@@ -275,6 +278,20 @@ impl DaemonOrchestrator {
         let session_manager = Arc::clone(&self.session_manager);
         session_manager.start_cleanup_task(SESSION_CLEANUP_INTERVAL_SECS);
         debug!("Started session cleanup task");
+
+        // Start approval cleanup task
+        let trust_store_for_cleanup = Arc::clone(&self.trust_store);
+        let approval_timeout = self.config.security.approval_timeout;
+        let shutdown_token_for_cleanup = self.shutdown_token.clone();
+        tokio::spawn(async move {
+            Self::run_approval_cleanup_task(
+                trust_store_for_cleanup,
+                approval_timeout,
+                shutdown_token_for_cleanup,
+            )
+            .await;
+        });
+        debug!("Started approval cleanup task");
 
         // Initialize signaling client
         let signaling_config = SignalingConfig::new(&self.config.network.signaling_url)
@@ -554,6 +571,45 @@ impl DaemonOrchestrator {
             }
         } else {
             warn!("Received ICE candidate from unknown device: {}", device_id);
+        }
+    }
+
+    /// Runs the periodic approval cleanup task.
+    ///
+    /// This task runs at `APPROVAL_CLEANUP_INTERVAL_SECS` intervals and removes
+    /// pending approvals that have exceeded the configured timeout.
+    async fn run_approval_cleanup_task(
+        trust_store: Arc<TrustStore>,
+        timeout_secs: u64,
+        shutdown_token: CancellationToken,
+    ) {
+        // Skip cleanup if timeout is 0 (disabled)
+        if timeout_secs == 0 {
+            debug!("Approval timeout is 0, cleanup task disabled");
+            return;
+        }
+
+        let mut interval = tokio::time::interval(Duration::from_secs(APPROVAL_CLEANUP_INTERVAL_SECS));
+
+        loop {
+            tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    debug!("Approval cleanup task received shutdown signal");
+                    break;
+                }
+                _ = interval.tick() => {
+                    match trust_store.cleanup_expired_approvals(timeout_secs) {
+                        Ok(expired) => {
+                            for device_id in expired {
+                                info!(?device_id, "Pending approval expired");
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to cleanup expired approvals: {}", e);
+                        }
+                    }
+                }
+            }
         }
     }
 

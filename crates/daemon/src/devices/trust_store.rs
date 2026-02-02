@@ -559,23 +559,29 @@ impl TrustStore {
 
     /// Removes expired pending approvals (older than the given timeout in seconds).
     ///
-    /// Returns the number of approvals removed.
-    pub fn cleanup_expired_pending(&self, timeout_secs: u64) -> Result<usize> {
+    /// Returns a list of device IDs that were expired and removed.
+    pub fn cleanup_expired_approvals(&self, timeout_secs: u64) -> Result<Vec<DeviceId>> {
         let mut pending = self
             .pending_approvals
             .write()
             .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on pending approvals"))?;
 
-        let before_count = pending.len();
+        let mut expired = Vec::new();
 
-        pending.retain(|_, approval| approval.age_secs() < timeout_secs);
+        pending.retain(|device_id, approval| {
+            if approval.age_secs() >= timeout_secs {
+                expired.push(*device_id);
+                false // Remove from map
+            } else {
+                true // Keep in map
+            }
+        });
 
-        let removed = before_count - pending.len();
-        if removed > 0 {
-            tracing::info!("Removed {} expired pending approvals", removed);
+        if !expired.is_empty() {
+            tracing::info!("Removed {} expired pending approvals", expired.len());
         }
 
-        Ok(removed)
+        Ok(expired)
     }
 }
 
@@ -1025,5 +1031,116 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         let data: serde_json::Value = serde_json::from_str(&contents).unwrap();
         assert_eq!(data["version"], 1);
+    }
+
+    #[test]
+    fn test_cleanup_expired_approvals() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = create_test_store(&temp_dir);
+
+        // Add a pending approval
+        let identity = protocol::DeviceIdentity::generate();
+        let approval = PendingApproval::new(
+            *identity.device_id(),
+            "Test Device".to_string(),
+            identity.public_key_bytes(),
+            None,
+        );
+        let device_id = approval.device_id;
+
+        store.add_pending(approval).unwrap();
+        assert_eq!(store.pending_count().unwrap(), 1);
+
+        // With a long timeout, nothing should be expired
+        let expired = store.cleanup_expired_approvals(3600).unwrap();
+        assert!(expired.is_empty());
+        assert_eq!(store.pending_count().unwrap(), 1);
+
+        // Wait just over 1 second for the approval to age
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // With a 1 second timeout, it should now be expired
+        let expired = store.cleanup_expired_approvals(1).unwrap();
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0], device_id);
+        assert_eq!(store.pending_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_expired_approvals_multiple() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = create_test_store(&temp_dir);
+
+        // Add multiple pending approvals
+        for i in 0..5 {
+            let identity = protocol::DeviceIdentity::generate();
+            let approval = PendingApproval::new(
+                *identity.device_id(),
+                format!("Device {}", i),
+                identity.public_key_bytes(),
+                None,
+            );
+            store.add_pending(approval).unwrap();
+        }
+        assert_eq!(store.pending_count().unwrap(), 5);
+
+        // Wait just over 1 second for all approvals to age
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // With 1 second timeout, all should expire
+        let expired = store.cleanup_expired_approvals(1).unwrap();
+        assert_eq!(expired.len(), 5);
+        assert_eq!(store.pending_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_expired_approvals_returns_device_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = create_test_store(&temp_dir);
+
+        let identity = protocol::DeviceIdentity::generate();
+        let expected_device_id = *identity.device_id();
+        let approval = PendingApproval::new(
+            expected_device_id,
+            "Test Device".to_string(),
+            identity.public_key_bytes(),
+            None,
+        );
+
+        store.add_pending(approval).unwrap();
+
+        // Wait just over 1 second
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // Expire with 1 second timeout
+        let expired = store.cleanup_expired_approvals(1).unwrap();
+
+        // Verify the returned device ID matches
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0], expected_device_id);
+    }
+
+    #[test]
+    fn test_cleanup_expired_approvals_respects_timeout() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = create_test_store(&temp_dir);
+
+        // Add a pending approval
+        let identity = protocol::DeviceIdentity::generate();
+        let approval = PendingApproval::new(
+            *identity.device_id(),
+            "Test Device".to_string(),
+            identity.public_key_bytes(),
+            None,
+        );
+
+        store.add_pending(approval).unwrap();
+        assert_eq!(store.pending_count().unwrap(), 1);
+
+        // With a very long timeout, nothing should be expired even after waiting
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let expired = store.cleanup_expired_approvals(3600).unwrap();
+        assert!(expired.is_empty());
+        assert_eq!(store.pending_count().unwrap(), 1);
     }
 }
