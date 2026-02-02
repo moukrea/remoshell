@@ -1,0 +1,90 @@
+{
+  "version": "1.0",
+  "description": "Protocol test vectors for TS/Rust interoperability. Bytes are MessagePack encoded envelopes.",
+  "encoding": "messagepack",
+  "vectors": [
+    {
+      "name": "ping",
+      "description": "Heartbeat ping message",
+      "sequence": 1,
+      "message_type": "Ping",
+      "expected": {
+        "timestamp": 12345,
+        "payload_length": 0
+      },
+      "bytes_hex": "93010192a450696e6792cd3039c400"
+    },
+    {
+      "name": "session_create_default",
+      "description": "Default session create request",
+      "sequence": 2,
+      "message_type": "SessionCreate",
+      "expected": {
+        "cols": 80,
+        "rows": 24,
+        "shell": null,
+        "env": [],
+        "cwd": null
+      },
+      "bytes_hex": "93010292ad53657373696f6e437265617465955018c090c0"
+    },
+    {
+      "name": "session_data",
+      "description": "Session stdout data with 'Hello' content",
+      "sequence": 3,
+      "message_type": "SessionData",
+      "expected": {
+        "session_id": "sess-1",
+        "stream": "Stdout",
+        "data_text": "Hello"
+      },
+      "bytes_hex": "93010392ab53657373696f6e4461746193a6736573732d31a65374646f7574c40548656c6c6f"
+    },
+    {
+      "name": "error_not_found",
+      "description": "Error message with NotFound code",
+      "sequence": 4,
+      "message_type": "Error",
+      "expected": {
+        "code": "NotFound",
+        "message": "Not found",
+        "context": "test",
+        "recoverable": false
+      },
+      "bytes_hex": "93010492a54572726f7294a84e6f74466f756e64a94e6f7420666f756e64a474657374c2"
+    },
+    {
+      "name": "file_list_response",
+      "description": "File list response with single file entry",
+      "sequence": 5,
+      "message_type": "FileListResponse",
+      "expected": {
+        "path": "/home",
+        "entries": [
+          {
+            "name": "test.txt",
+            "entry_type": "File",
+            "size": 100,
+            "mode": 420,
+            "modified": 1704067200
+          }
+        ]
+      },
+      "bytes_hex": "93010592b046696c654c697374526573706f6e736592a52f686f6d659195a8746573742e747874a446696c6564cd01a4ce65920080"
+    },
+    {
+      "name": "capabilities",
+      "description": "Default capabilities announcement",
+      "sequence": 6,
+      "message_type": "Capabilities",
+      "expected": {
+        "protocol_versions": [1],
+        "features": ["shell", "file-transfer", "device-trust"],
+        "max_message_size": 1048576,
+        "max_sessions": 16,
+        "compression": ["lz4"]
+      },
+      "bytes_hex": "93010692ac4361706162696c697469657395910193a57368656c6cad66696c652d7472616e73666572ac6465766963652d7472757374ce001000001091a36c7a34"
+    }
+  ]
+}
