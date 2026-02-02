@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use protocol::crypto::DeviceIdentity;
+use protocol::DeviceId;
 use tokio::sync::{broadcast, oneshot, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -345,7 +346,7 @@ impl DaemonOrchestrator {
         shutdown_token: CancellationToken,
         identity: DeviceIdentity,
         connections: Arc<RwLock<std::collections::HashMap<String, ActiveConnection>>>,
-        _router: Arc<MessageRouter<SessionManagerImpl>>,
+        router: Arc<MessageRouter<SessionManagerImpl>>,
         config: Config,
     ) {
         let Some(mut events) = signaling_client.events() else {
@@ -380,6 +381,9 @@ impl DaemonOrchestrator {
                                 &signaling_client,
                                 &identity,
                                 &connections,
+                                &router,
+                                &event_tx,
+                                &shutdown_token,
                                 &config,
                                 sdp,
                                 from_device_id,
@@ -437,6 +441,9 @@ impl DaemonOrchestrator {
         signaling_client: &Arc<WebSocketSignalingClient>,
         identity: &DeviceIdentity,
         connections: &Arc<RwLock<std::collections::HashMap<String, ActiveConnection>>>,
+        router: &Arc<MessageRouter<SessionManagerImpl>>,
+        event_tx: &broadcast::Sender<OrchestratorEvent>,
+        shutdown_token: &CancellationToken,
         config: &Config,
         sdp: String,
         from_device_id: Option<String>,
@@ -513,7 +520,218 @@ impl DaemonOrchestrator {
         };
 
         let mut conns = connections.write().await;
-        conns.insert(device_id, connection);
+        conns.insert(device_id.clone(), connection);
+        drop(conns); // Release lock before spawning task
+
+        // Spawn a task to handle messages from this connection
+        let connections_for_handler = Arc::clone(connections);
+        let router_for_handler = Arc::clone(router);
+        let event_tx_for_handler = event_tx.clone();
+        let shutdown_token_for_handler = shutdown_token.clone();
+        let device_id_for_handler = device_id.clone();
+
+        tokio::spawn(async move {
+            Self::handle_connection_messages(
+                device_id_for_handler,
+                connections_for_handler,
+                router_for_handler,
+                event_tx_for_handler,
+                shutdown_token_for_handler,
+            )
+            .await;
+        });
+    }
+
+    /// Handles incoming messages from a WebRTC connection.
+    ///
+    /// This task runs for the lifetime of the connection, receiving messages from
+    /// the control and files channels, routing them through the MessageRouter,
+    /// and sending responses back to the client.
+    async fn handle_connection_messages(
+        device_id: String,
+        connections: Arc<RwLock<std::collections::HashMap<String, ActiveConnection>>>,
+        router: Arc<MessageRouter<SessionManagerImpl>>,
+        event_tx: broadcast::Sender<OrchestratorEvent>,
+        shutdown_token: CancellationToken,
+    ) {
+        use crate::network::ChannelType;
+        use protocol::messages::{Envelope, Message};
+
+        info!(device_id = %device_id, "Starting message handler for connection");
+
+        // Parse the device ID from fingerprint format
+        let parsed_device_id = match Self::parse_device_id_from_fingerprint(&device_id) {
+            Some(id) => id,
+            None => {
+                warn!(device_id = %device_id, "Failed to parse device ID, using placeholder");
+                DeviceId::from_bytes([0u8; 16])
+            }
+        };
+
+        let mut sequence: u64 = 1;
+
+        // Channels to try, in order of priority
+        let channels = [ChannelType::Control, ChannelType::Files];
+        let mut current_channel_idx = 0;
+
+        loop {
+            // Check for shutdown
+            if shutdown_token.is_cancelled() {
+                info!(device_id = %device_id, "Message handler received shutdown signal");
+                break;
+            }
+
+            // Round-robin between channels to handle messages from all channels
+            let channel_type = channels[current_channel_idx];
+            current_channel_idx = (current_channel_idx + 1) % channels.len();
+
+            // Try to receive a message from the current channel
+            let recv_result = {
+                let mut conns = connections.write().await;
+                let Some(conn) = conns.get_mut(&device_id) else {
+                    info!(device_id = %device_id, "Connection no longer exists, stopping message handler");
+                    break;
+                };
+
+                // Use a short timeout to allow checking other channels
+                tokio::select! {
+                    biased;
+                    _ = shutdown_token.cancelled() => {
+                        info!(device_id = %device_id, "Shutdown during recv");
+                        return; // Exit directly since we're in a spawned task
+                    }
+                    result = conn.handler.recv(channel_type) => {
+                        Some(result)
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                        None // Timeout, try next channel
+                    }
+                }
+            };
+
+            let Some(result) = recv_result else {
+                continue;
+            };
+
+            let data = match result {
+                Ok(data) => data,
+                Err(e) => {
+                    // Check if this is a "no data" error or a real connection error
+                    let error_str = e.to_string();
+                    if error_str.contains("channel closed") || error_str.contains("connection closed") {
+                        // Connection might be closed or had an error
+                        debug!(device_id = %device_id, error = %e, "Error receiving message, connection may be closed");
+                        // Remove connection and emit disconnect event
+                        let mut conns = connections.write().await;
+                        if conns.remove(&device_id).is_some() {
+                            let _ = event_tx.send(OrchestratorEvent::PeerDisconnected {
+                                device_id: device_id.clone(),
+                                reason: format!("Receive error: {}", e),
+                            });
+                        }
+                        break;
+                    }
+                    // Other errors - log and continue
+                    debug!(device_id = %device_id, error = %e, channel = ?channel_type, "Receive error");
+                    continue;
+                }
+            };
+
+            // Decode the envelope
+            let envelope = match Envelope::from_msgpack(&data) {
+                Ok(env) => env,
+                Err(e) => {
+                    warn!(device_id = %device_id, error = %e, "Failed to decode message envelope");
+                    continue;
+                }
+            };
+
+            debug!(
+                device_id = %device_id,
+                sequence = envelope.sequence,
+                channel = ?channel_type,
+                "Received message"
+            );
+
+            // Get the authenticated public key from the connection for device verification
+            let authenticated_public_key = {
+                let conns = connections.read().await;
+                conns.get(&device_id).and_then(|conn| conn.handler.peer_public_key())
+            };
+
+            // Route the message through the router
+            let response = router
+                .route(
+                    envelope.payload,
+                    &parsed_device_id,
+                    authenticated_public_key.as_ref(),
+                )
+                .await;
+
+            // Handle the routing result
+            match response {
+                Ok(Some(response_msg)) => {
+                    // Send the response back on the same channel
+                    let response_envelope = Envelope::new(sequence, response_msg);
+                    sequence += 1;
+
+                    match response_envelope.to_msgpack() {
+                        Ok(response_data) => {
+                            let mut conns = connections.write().await;
+                            if let Some(conn) = conns.get_mut(&device_id) {
+                                if let Err(e) = conn.handler.send(channel_type, &response_data).await {
+                                    warn!(device_id = %device_id, error = %e, "Failed to send response");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(device_id = %device_id, error = %e, "Failed to encode response");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // No response needed (e.g., for data messages or acknowledgments)
+                    debug!(device_id = %device_id, "Message handled, no response needed");
+                }
+                Err(e) => {
+                    // Send an error response
+                    warn!(device_id = %device_id, error = %e, "Error routing message");
+                    let error_msg = e.to_error_message(None);
+                    let error_response = Message::Error(error_msg);
+                    let response_envelope = Envelope::new(sequence, error_response);
+                    sequence += 1;
+
+                    if let Ok(response_data) = response_envelope.to_msgpack() {
+                        let mut conns = connections.write().await;
+                        if let Some(conn) = conns.get_mut(&device_id) {
+                            let _ = conn.handler.send(channel_type, &response_data).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        info!(device_id = %device_id, "Message handler stopped");
+    }
+
+    /// Parse a device ID from its fingerprint format.
+    fn parse_device_id_from_fingerprint(fingerprint: &str) -> Option<DeviceId> {
+        // Remove colons and decode hex
+        let hex_str: String = fingerprint.chars().filter(|c| *c != ':').collect();
+
+        if hex_str.len() != 32 {
+            // DeviceId is 16 bytes = 32 hex chars
+            return None;
+        }
+
+        let bytes = hex::decode(&hex_str).ok()?;
+        if bytes.len() != 16 {
+            return None;
+        }
+
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(&bytes);
+        Some(DeviceId::from_bytes(arr))
     }
 
     /// Handles an incoming WebRTC answer.
