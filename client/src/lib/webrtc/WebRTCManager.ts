@@ -101,6 +101,8 @@ export class WebRTCManager {
   private peers: Map<string, PeerConnectionEntry> = new Map();
   private subscribers: Set<WebRTCEventSubscriber> = new Set();
   private iceServers: RTCIceServer[];
+  private iceRecoveryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private readonly ICE_RECOVERY_TIMEOUT = 10000; // 10 seconds
 
   constructor(iceServers: RTCIceServer[] = DEFAULT_ICE_SERVERS) {
     this.iceServers = iceServers;
@@ -241,20 +243,56 @@ export class WebRTCManager {
       const entry = this.peers.get(peerId);
       if (!entry) return;
 
+      console.log(`[WebRTCManager] ICE connection state for ${peerId}: ${iceConnectionState}`);
+
       let newState: ConnectionState | null = null;
       switch (iceConnectionState) {
+        case 'new':
+          // Initial state, ICE agent created but not started
+          // No state change needed, peer is already in 'new' or 'connecting'
+          break;
+
+        case 'checking':
+          // ICE agent checking candidate pairs
+          // Map to 'connecting' state
+          newState = 'connecting';
+          break;
+
         case 'connected':
-        case 'completed':
+          // At least one working candidate pair found
           newState = 'connected';
+          this.clearIceRecoveryTimer(peerId);
           break;
+
+        case 'completed':
+          // ICE checks complete, connection established
+          newState = 'connected';
+          this.clearIceRecoveryTimer(peerId);
+          break;
+
         case 'disconnected':
+          // Connectivity lost, may recover
+          console.warn(`[WebRTCManager] ICE disconnected for ${peerId}, attempting recovery...`);
           newState = 'disconnected';
+          this.startIceRecoveryTimer(peerId);
           break;
+
         case 'failed':
+          // ICE checks failed, connection cannot be established
+          console.error(`[WebRTCManager] ICE connection failed for ${peerId}`);
           newState = 'failed';
+          this.clearIceRecoveryTimer(peerId);
           break;
+
         case 'closed':
+          // ICE agent shut down
           newState = 'closed';
+          this.clearIceRecoveryTimer(peerId);
+          break;
+
+        default:
+          // Handle unknown future states
+          console.warn(`[WebRTCManager] Unknown ICE state for ${peerId}: ${iceConnectionState satisfies never}`);
           break;
       }
 
@@ -555,11 +593,43 @@ export class WebRTCManager {
   }
 
   /**
+   * Start ICE recovery timer for a disconnected peer
+   * If the peer doesn't recover within the timeout, treat it as failed
+   */
+  private startIceRecoveryTimer(peerId: string): void {
+    this.clearIceRecoveryTimer(peerId);
+
+    const timer = setTimeout(() => {
+      const entry = this.peers.get(peerId);
+      if (entry && entry.state === 'disconnected') {
+        console.error(`[WebRTCManager] ICE recovery timeout for ${peerId}, treating as failed`);
+        this.updateConnectionState(peerId, 'failed');
+      }
+    }, this.ICE_RECOVERY_TIMEOUT);
+
+    this.iceRecoveryTimers.set(peerId, timer);
+  }
+
+  /**
+   * Clear ICE recovery timer for a peer
+   */
+  private clearIceRecoveryTimer(peerId: string): void {
+    const timer = this.iceRecoveryTimers.get(peerId);
+    if (timer) {
+      clearTimeout(timer);
+      this.iceRecoveryTimers.delete(peerId);
+    }
+  }
+
+  /**
    * Clean up a peer connection
    */
   private cleanupPeer(peerId: string): void {
     const entry = this.peers.get(peerId);
     if (!entry) return;
+
+    // Clear any pending ICE recovery timer
+    this.clearIceRecoveryTimer(peerId);
 
     // Close all data channels
     entry.channels.forEach((channel) => {
