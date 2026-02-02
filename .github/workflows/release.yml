@@ -328,6 +328,33 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f | sort
 
+      - name: Generate version matrix
+        id: versions
+        run: |
+          # Extract all versions
+          RELEASE_VERSION="${{ needs.prepare.outputs.version }}"
+          CARGO_VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          CLIENT_VERSION=$(jq -r '.version' client/package.json)
+          SIGNALING_VERSION=$(jq -r '.version' signaling/package.json)
+          TAURI_VERSION=$(jq -r '.version' client/src-tauri/tauri.conf.json)
+          PROTOCOL_VERSION=$(grep -o 'PROTOCOL_VERSION.*=.*[0-9]*' crates/protocol/src/messages.rs | grep -o '[0-9]*$')
+
+          # Generate version table as multiline output
+          {
+            echo "version_info<<EOF"
+            echo "## Version Information"
+            echo ""
+            echo "| Component | Version |"
+            echo "|-----------|---------|"
+            echo "| Release | ${RELEASE_VERSION} |"
+            echo "| Workspace (Cargo.toml) | ${CARGO_VERSION} |"
+            echo "| Client (package.json) | ${CLIENT_VERSION} |"
+            echo "| Signaling (package.json) | ${SIGNALING_VERSION} |"
+            echo "| Desktop (tauri.conf.json) | ${TAURI_VERSION} |"
+            echo "| Protocol Version | ${PROTOCOL_VERSION} |"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Create and push tag
         run: |
           git config user.name "github-actions[bot]"
@@ -346,6 +373,8 @@ jobs:
             ## Changes since ${{ needs.prepare.outputs.prev_tag }}
 
             ${{ needs.prepare.outputs.changelog }}
+
+            ${{ steps.versions.outputs.version_info }}
 
             ## Downloads
 
