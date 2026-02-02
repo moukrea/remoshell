@@ -296,7 +296,7 @@ async fn test_router_session_create() {
         cwd: None,
     });
 
-    let result = router.route(msg, &test_device_id()).await;
+    let result = router.route(msg, &test_device_id(), None).await;
     assert!(result.is_ok());
 
     match result.unwrap() {
@@ -318,7 +318,7 @@ async fn test_router_ping_pong() {
         payload: b"test".to_vec(),
     });
 
-    let result = router.route(msg, &test_device_id()).await;
+    let result = router.route(msg, &test_device_id(), None).await;
     assert!(result.is_ok());
 
     match result.unwrap() {
@@ -346,7 +346,7 @@ async fn test_router_file_list() {
         include_hidden: false,
     });
 
-    let result = router.route(msg, &test_device_id()).await;
+    let result = router.route(msg, &test_device_id(), None).await;
     assert!(result.is_ok());
 
     match result.unwrap() {

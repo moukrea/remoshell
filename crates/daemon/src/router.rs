@@ -51,6 +51,10 @@ pub enum RouterError {
     /// Permission denied error.
     #[error("permission denied: {0}")]
     Permission(String),
+
+    /// Authentication error.
+    #[error("authentication error: {0}")]
+    Auth(String),
 }
 
 impl RouterError {
@@ -72,6 +76,7 @@ impl RouterError {
             RouterError::Permission(_) => (ErrorCode::Unauthorized, false),
             RouterError::InvalidRequest(_) => (ErrorCode::InvalidRequest, false),
             RouterError::Internal(_) => (ErrorCode::InternalError, true),
+            RouterError::Auth(_) => (ErrorCode::Unauthorized, false),
         };
 
         ErrorMessage {
@@ -210,7 +215,16 @@ impl<S: SessionManager> MessageRouter<S> {
     ///
     /// The `device_id` parameter identifies which device sent the message,
     /// enabling device-aware routing decisions and authorization checks.
-    pub async fn route(&self, message: Message, device_id: &DeviceId) -> RouterResult {
+    ///
+    /// The `authenticated_public_key` parameter is the Noise-authenticated public key
+    /// from the handshake. If provided, it is used to verify claimed public keys
+    /// in device approval requests to prevent spoofing attacks.
+    pub async fn route(
+        &self,
+        message: Message,
+        device_id: &DeviceId,
+        authenticated_public_key: Option<&[u8; 32]>,
+    ) -> RouterResult {
         debug!(?message, ?device_id, "Routing message");
 
         match message {
@@ -243,7 +257,10 @@ impl<S: SessionManager> MessageRouter<S> {
 
             // Device messages
             Message::DeviceInfo(info) => self.handle_device_info(info).await,
-            Message::DeviceApprovalRequest(req) => self.handle_device_approval_request(req).await,
+            Message::DeviceApprovalRequest(req) => {
+                self.handle_device_approval_request(req, authenticated_public_key)
+                    .await
+            }
             Message::DeviceApproved(_) | Message::DeviceRejected(_) => {
                 // These are response messages, not requests - ignore them
                 debug!("Ignoring response message received as request");
@@ -549,7 +566,11 @@ impl<S: SessionManager> MessageRouter<S> {
         Ok(None)
     }
 
-    async fn handle_device_approval_request(&self, req: DeviceApprovalRequest) -> RouterResult {
+    async fn handle_device_approval_request(
+        &self,
+        req: DeviceApprovalRequest,
+        authenticated_public_key: Option<&[u8; 32]>,
+    ) -> RouterResult {
         info!(
             device_id = %req.device_id,
             name = %req.name,
@@ -560,6 +581,26 @@ impl<S: SessionManager> MessageRouter<S> {
         // Parse the device ID from hex fingerprint format
         let device_id = parse_device_id_from_fingerprint(&req.device_id)
             .ok_or_else(|| RouterError::InvalidRequest("Invalid device ID format".to_string()))?;
+
+        // Verify the claimed public key matches the Noise-authenticated key
+        // This prevents key spoofing attacks where a peer claims a different identity
+        if let Some(authenticated_key) = authenticated_public_key {
+            let claimed_key: [u8; 32] = req.public_key.clone().try_into().map_err(|_| {
+                RouterError::InvalidRequest("Invalid public key length".to_string())
+            })?;
+
+            // Compare keys (note: ideally this should use constant-time comparison
+            // via the subtle crate to prevent timing attacks, but the security impact
+            // is minimal since the attacker already knows both keys)
+            if &claimed_key != authenticated_key {
+                warn!(
+                    claimed = ?hex::encode(&claimed_key),
+                    authenticated = ?hex::encode(authenticated_key),
+                    "Public key mismatch - possible spoofing attempt"
+                );
+                return Err(RouterError::Auth("Public key mismatch".to_string()));
+            }
+        }
 
         // First, check if the device is already in the trusted devices store
         match self.trust_store.get_device(&device_id) {
@@ -922,7 +963,7 @@ mod tests {
             cwd: None,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
@@ -970,7 +1011,7 @@ mod tests {
 
         let msg = Message::SessionCreate(SessionCreate::default());
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_err());
     }
 
@@ -990,7 +1031,7 @@ mod tests {
             cwd: None,
         });
 
-        let result = router.route(msg, &untrusted_device).await;
+        let result = router.route(msg, &untrusted_device, None).await;
         assert!(result.is_err());
 
         match result {
@@ -1047,7 +1088,7 @@ mod tests {
             cwd: None,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_err());
 
         match result {
@@ -1067,7 +1108,7 @@ mod tests {
             session_id: "test-session".to_string(),
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none()); // No direct response
     }
@@ -1081,7 +1122,7 @@ mod tests {
             session_id: "test-session".to_string(),
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1096,7 +1137,7 @@ mod tests {
             signal: Some(9),
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -1119,7 +1160,7 @@ mod tests {
             rows: 40,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1135,7 +1176,7 @@ mod tests {
             data: b"hello".to_vec(),
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1151,7 +1192,7 @@ mod tests {
             data: b"hello".to_vec(),
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::InvalidRequest(_))));
     }
@@ -1176,7 +1217,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -1205,7 +1246,7 @@ mod tests {
             chunk_size: 1024,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -1234,7 +1275,7 @@ mod tests {
             mode: 0o644,
             overwrite: false,
         });
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
@@ -1244,7 +1285,7 @@ mod tests {
             offset: 0,
             data: b"Hello World!".to_vec(),
         });
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
@@ -1258,7 +1299,7 @@ mod tests {
             path: dest_path.to_string_lossy().to_string(),
             checksum,
         });
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
 
         // Verify file was created
@@ -1284,7 +1325,7 @@ mod tests {
             protocol_version: 1,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1305,7 +1346,7 @@ mod tests {
             reason: Some("Testing".to_string()),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -1314,6 +1355,77 @@ mod tests {
                 assert!(rejected.retry_allowed);
             }
             _ => panic!("Expected DeviceRejected for new device"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_device_approval_request_public_key_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let router = create_test_router(&temp_dir);
+
+        // Generate a device identity
+        let identity = protocol::DeviceIdentity::generate();
+        let device_id = identity.device_id().to_string();
+
+        // Create a request with the device's public key
+        let msg = Message::DeviceApprovalRequest(DeviceApprovalRequest {
+            device_id: device_id.clone(),
+            name: "Test Device".to_string(),
+            public_key: identity.public_key_bytes().to_vec(),
+            reason: Some("Testing".to_string()),
+        });
+
+        // Provide a DIFFERENT authenticated public key (simulating spoofing)
+        let different_key: [u8; 32] = [0xAB; 32]; // Different from device's key
+
+        let result = router
+            .route(msg, &test_device_id(), Some(&different_key))
+            .await;
+        assert!(result.is_err());
+
+        match result {
+            Err(RouterError::Auth(msg)) => {
+                assert!(
+                    msg.contains("mismatch"),
+                    "Expected 'mismatch' error, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected RouterError::Auth for public key mismatch"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_device_approval_request_public_key_match() {
+        let temp_dir = TempDir::new().unwrap();
+        let router = create_test_router(&temp_dir);
+
+        // Generate a device identity
+        let identity = protocol::DeviceIdentity::generate();
+        let device_id = identity.device_id().to_string();
+        let public_key_bytes = identity.public_key_bytes();
+
+        // Create a request with the device's public key
+        let msg = Message::DeviceApprovalRequest(DeviceApprovalRequest {
+            device_id: device_id.clone(),
+            name: "Test Device".to_string(),
+            public_key: public_key_bytes.to_vec(),
+            reason: Some("Testing".to_string()),
+        });
+
+        // Provide the SAME authenticated public key
+        let result = router
+            .route(msg, &test_device_id(), Some(&public_key_bytes))
+            .await;
+
+        // Should succeed (returns DeviceRejected since device is new, but no Auth error)
+        assert!(result.is_ok());
+        match result.unwrap() {
+            Some(Message::DeviceRejected(rejected)) => {
+                assert_eq!(rejected.device_id, device_id);
+                assert!(rejected.retry_allowed);
+            }
+            _ => panic!("Expected DeviceRejected for new device with matching key"),
         }
     }
 
@@ -1331,7 +1443,7 @@ mod tests {
             payload: b"ping!".to_vec(),
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
 
         match result.unwrap() {
@@ -1353,7 +1465,7 @@ mod tests {
             payload: vec![],
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1370,7 +1482,7 @@ mod tests {
             recoverable: false,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1389,7 +1501,7 @@ mod tests {
             session_id: "test".to_string(),
             pid: 123,
         });
-        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
 
         // SessionClosed
         let msg = Message::SessionClosed(SessionClosed {
@@ -1398,14 +1510,14 @@ mod tests {
             signal: None,
             reason: None,
         });
-        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
 
         // FileListResponse
         let msg = Message::FileListResponse(FileListResponse {
             path: "/tmp".to_string(),
             entries: vec![],
         });
-        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
 
         // FileDownloadChunk
         let msg = Message::FileDownloadChunk(FileDownloadChunk {
@@ -1415,7 +1527,7 @@ mod tests {
             data: vec![],
             is_last: true,
         });
-        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
 
         // DeviceApproved
         let msg = Message::DeviceApproved(DeviceApproved {
@@ -1423,7 +1535,7 @@ mod tests {
             expires_at: None,
             allowed_capabilities: vec![],
         });
-        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
 
         // DeviceRejected
         let msg = Message::DeviceRejected(DeviceRejected {
@@ -1431,7 +1543,7 @@ mod tests {
             reason: "test".to_string(),
             retry_allowed: false,
         });
-        assert!(router.route(msg, &test_device_id()).await.unwrap().is_none());
+        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
     }
 
     // =========================================================================
@@ -1459,7 +1571,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_err());
         // Permission check happens first, before filesystem access
         assert!(matches!(result, Err(RouterError::Permission(_))));
@@ -1477,7 +1589,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg, &test_device_id()).await;
+        let result = router.route(msg, &test_device_id(), None).await;
         assert!(result.is_err());
         // File error because the path is allowed but doesn't exist
         assert!(matches!(result, Err(RouterError::File(_))));
@@ -1525,7 +1637,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::Permission(_))));
     }
@@ -1570,7 +1682,7 @@ mod tests {
             chunk_size: 1024,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::Permission(_))));
     }
@@ -1617,7 +1729,7 @@ mod tests {
             overwrite: false,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_err());
         assert!(matches!(result, Err(RouterError::Permission(_))));
     }
@@ -1666,7 +1778,7 @@ mod tests {
             chunk_size: 1024,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
 
@@ -1676,7 +1788,7 @@ mod tests {
             include_hidden: false,
         });
 
-        let result = router.route(msg, &device_id).await;
+        let result = router.route(msg, &device_id, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
     }
