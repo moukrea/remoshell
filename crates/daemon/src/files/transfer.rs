@@ -410,7 +410,7 @@ impl FileTransfer {
     /// Clean up stale uploads older than the given duration.
     pub fn cleanup_stale_uploads(
         &self,
-        _max_age: std::time::Duration,
+        max_age: std::time::Duration,
     ) -> Result<(), TransferError> {
         // For now, just clean up the temp directory
         if self.temp_dir.exists() {
@@ -426,7 +426,7 @@ impl FileTransfer {
                     if let Ok(metadata) = entry.metadata() {
                         if let Ok(modified) = metadata.modified() {
                             if let Ok(age) = modified.elapsed() {
-                                if age > _max_age {
+                                if age > max_age {
                                     if let Err(e) = fs::remove_file(entry.path()) {
                                         warn!(path = ?entry.path(), error = %e, "Failed to cleanup stale temp file");
                                     }
