@@ -436,12 +436,17 @@ const App: Component = () => {
   const fileStore = getFileStore();
 
   const [activeView, setActiveView] = createSignal<AppView>('terminal');
-  const [isDarkTheme, setIsDarkTheme] = createSignal(true);
 
-  // Update document class for theme
+  // Load theme from localStorage, default to dark if not set
+  const savedTheme = localStorage.getItem('remoshell-theme');
+  const [isDarkTheme, setIsDarkTheme] = createSignal(savedTheme !== 'light');
+
+  // Update document class for theme and persist to localStorage
   createEffect(() => {
-    document.documentElement.classList.toggle('dark', isDarkTheme());
-    document.documentElement.classList.toggle('light', !isDarkTheme());
+    const isDark = isDarkTheme();
+    document.documentElement.classList.toggle('dark', isDark);
+    document.documentElement.classList.toggle('light', !isDark);
+    localStorage.setItem('remoshell-theme', isDark ? 'dark' : 'light');
   });
 
   // Subscribe to store events for logging/debugging
