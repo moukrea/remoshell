@@ -60,6 +60,33 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Bumping version: $VERSION -> $NEW_VERSION"
 
+      - name: Update version numbers
+        run: |
+          VERSION="${{ steps.version.outputs.new_version }}"
+          echo "Updating all components to version: $VERSION"
+
+          # Run version bump script
+          chmod +x ./scripts/bump-version.sh
+          ./scripts/bump-version.sh "$VERSION"
+
+          echo "Version update complete"
+
+      - name: Commit version changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if there are changes to commit
+          if git diff --quiet; then
+            echo "No version changes needed - versions already correct"
+          else
+            git add -A
+            git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
+            git push origin HEAD:main
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Generate changelog
         id: changelog
         uses: orhun/git-cliff-action@v4
@@ -87,6 +114,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -109,6 +138,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -148,6 +179,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -206,6 +239,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -249,6 +284,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
