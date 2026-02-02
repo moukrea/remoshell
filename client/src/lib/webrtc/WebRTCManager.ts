@@ -338,7 +338,24 @@ export class WebRTCManager {
     };
 
     channel.onerror = (event: Event) => {
-      console.error(`Data channel ${channelType} error:`, event);
+      const errorEvent = event as RTCErrorEvent;
+      const error = errorEvent.error || new Error('Unknown data channel error');
+
+      console.error(`[WebRTCManager] Data channel "${channelType}" error:`, error);
+
+      // Remove failed channel from map
+      const entry = this.peers.get(peerId);
+      if (entry) {
+        entry.channels.delete(channelType);
+      }
+
+      // Emit error event for application handling
+      this.emit({
+        type: 'error',
+        peerId,
+        channel: channelType,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     };
 
     channel.onclose = () => {
@@ -476,6 +493,65 @@ export class WebRTCManager {
 
     const dataChannel = entry.channels.get(channel);
     return dataChannel?.readyState === 'open';
+  }
+
+  /**
+   * Attempt to recreate a failed data channel
+   * @param peerId - The ID of the peer connection
+   * @param channelType - The type of channel to recreate
+   * @returns The new data channel, or null if peer connection unavailable
+   */
+  reconnectChannel(peerId: string, channelType: ChannelType): RTCDataChannel | null {
+    const entry = this.peers.get(peerId);
+    if (!entry) {
+      console.error('[WebRTCManager] Cannot reconnect channel: peer not found');
+      return null;
+    }
+
+    if (entry.state !== 'connected') {
+      console.error('[WebRTCManager] Cannot reconnect channel: peer not connected');
+      return null;
+    }
+
+    // Control channel is managed by simple-peer, cannot be manually reconnected
+    if (channelType === 'control') {
+      console.error('[WebRTCManager] Cannot reconnect control channel: managed by simple-peer');
+      return null;
+    }
+
+    // Access the underlying RTCPeerConnection
+    const peerConnection = (entry.peer as unknown as { _pc: RTCPeerConnection })._pc;
+    if (!peerConnection) {
+      console.error('[WebRTCManager] Cannot reconnect channel: no peer connection');
+      return null;
+    }
+
+    // Remove existing channel if present
+    const existing = entry.channels.get(channelType);
+    if (existing) {
+      try {
+        existing.close();
+      } catch {
+        // Ignore close errors on already-failed channel
+      }
+      entry.channels.delete(channelType);
+    }
+
+    console.log(`[WebRTCManager] Reconnecting data channel "${channelType}"`);
+
+    try {
+      const config = CHANNEL_CONFIGS[channelType];
+      const channel = peerConnection.createDataChannel(channelType, {
+        ordered: config.ordered,
+        maxRetransmits: config.maxRetransmits,
+      });
+      this.setupDataChannelHandlers(peerId, channelType, channel);
+      entry.channels.set(channelType, channel);
+      return channel;
+    } catch (error) {
+      console.error(`[WebRTCManager] Failed to reconnect channel "${channelType}":`, error);
+      return null;
+    }
   }
 
   /**
