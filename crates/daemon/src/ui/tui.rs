@@ -53,7 +53,11 @@ pub struct ApprovalResult {
 #[derive(Debug, Clone)]
 pub enum TuiEvent {
     /// A new device connected.
-    DeviceConnected { device_id: String, name: String },
+    DeviceConnected {
+        device_id: String,
+        name: String,
+        trust_level: DisplayTrustLevel,
+    },
     /// A device disconnected.
     DeviceDisconnected { device_id: String },
     /// A new session was created.
@@ -154,6 +158,41 @@ impl Tab {
     }
 }
 
+/// Trust level for display purposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayTrustLevel {
+    /// Unknown device, requires approval.
+    Unknown,
+    /// Trusted device.
+    Trusted,
+    /// Fully trusted device (can perform sensitive operations).
+    FullyTrusted,
+    /// Revoked device (permanently blocked).
+    Revoked,
+}
+
+impl DisplayTrustLevel {
+    /// Returns the display color for this trust level.
+    pub fn color(&self) -> Color {
+        match self {
+            DisplayTrustLevel::Unknown => Color::Yellow,
+            DisplayTrustLevel::Trusted => Color::Green,
+            DisplayTrustLevel::FullyTrusted => Color::Cyan,
+            DisplayTrustLevel::Revoked => Color::Red,
+        }
+    }
+
+    /// Returns the display string for this trust level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DisplayTrustLevel::Unknown => "Unknown",
+            DisplayTrustLevel::Trusted => "Trusted",
+            DisplayTrustLevel::FullyTrusted => "Fully Trusted",
+            DisplayTrustLevel::Revoked => "Revoked",
+        }
+    }
+}
+
 /// Information about a connected device for display.
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -163,6 +202,12 @@ pub struct DeviceInfo {
     pub name: String,
     /// Whether the device is connected.
     pub connected: bool,
+    /// Trust level of the device.
+    pub trust_level: DisplayTrustLevel,
+    /// Last seen timestamp (as formatted string).
+    pub last_seen: String,
+    /// Number of active sessions from this device.
+    pub session_count: usize,
 }
 
 /// Information about an active session for display.
@@ -545,14 +590,32 @@ impl TuiApp {
         self.approvals.retain(|a| a.device_id != device_id);
     }
 
+    /// Updates the session count for a device.
+    pub fn update_device_session_count(&mut self, device_id: &str, delta: i32) {
+        if let Some(device) = self.devices.iter_mut().find(|d| d.id == device_id) {
+            if delta > 0 {
+                device.session_count = device.session_count.saturating_add(delta as usize);
+            } else {
+                device.session_count = device.session_count.saturating_sub((-delta) as usize);
+            }
+        }
+    }
+
     /// Processes a TUI event.
     pub fn handle_event(&mut self, event: TuiEvent) {
         match event {
-            TuiEvent::DeviceConnected { device_id, name } => {
+            TuiEvent::DeviceConnected {
+                device_id,
+                name,
+                trust_level,
+            } => {
                 self.devices.push(DeviceInfo {
                     id: device_id,
                     name,
                     connected: true,
+                    trust_level,
+                    last_seen: "Just now".to_string(),
+                    session_count: 0,
                 });
             }
             TuiEvent::DeviceDisconnected { device_id } => {
@@ -916,6 +979,99 @@ impl TuiApp {
         frame.render_widget(paragraph, area);
     }
 
+    /// Renders the device detail panel.
+    fn render_device_detail(
+        frame: &mut Frame,
+        area: Rect,
+        devices: &[DeviceInfo],
+        selected_index: Option<usize>,
+    ) {
+        let device = selected_index.and_then(|i| devices.get(i));
+
+        let content = if let Some(d) = device {
+            let status_span = if d.connected {
+                Span::styled(
+                    "Online",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("Offline", Style::default().fg(Color::Red))
+            };
+
+            let trust_span = Span::styled(
+                d.trust_level.as_str(),
+                Style::default()
+                    .fg(d.trust_level.color())
+                    .add_modifier(Modifier::BOLD),
+            );
+
+            vec![
+                Line::from(vec![
+                    Span::styled("Device Name: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        &d.name,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Device ID: ", Style::default().fg(Color::Gray)),
+                    Span::styled(&d.id, Style::default().fg(Color::DarkGray)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Status: ", Style::default().fg(Color::Gray)),
+                    status_span,
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Trust Level: ", Style::default().fg(Color::Gray)),
+                    trust_span,
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Last Seen: ", Style::default().fg(Color::Gray)),
+                    Span::styled(&d.last_seen, Style::default().fg(Color::White)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Active Sessions: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        d.session_count.to_string(),
+                        Style::default().fg(Color::Magenta),
+                    ),
+                ]),
+            ]
+        } else {
+            vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  No device selected",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "  Use j/k or Up/Down to select",
+                    Style::default().fg(Color::DarkGray),
+                )]),
+            ]
+        };
+
+        let paragraph = Paragraph::new(content)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Device Details "),
+            )
+            .style(Style::default().fg(Color::White));
+
+        frame.render_widget(paragraph, area);
+    }
+
     /// Renders the devices tab content.
     fn render_devices_tab(
         frame: &mut Frame,
@@ -923,23 +1079,40 @@ impl TuiApp {
         devices: &[DeviceInfo],
         list_state: &mut ListState,
     ) {
+        // Split area: list on left, details on right
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50), // Device list
+                Constraint::Percentage(50), // Device details
+            ])
+            .split(area);
+
+        // Render the device list
         let items: Vec<ListItem> = devices
             .iter()
             .map(|d| {
                 let status = if d.connected {
-                    Span::styled("Online", Style::default().fg(Color::Green))
+                    Span::styled("*", Style::default().fg(Color::Green))
                 } else {
-                    Span::styled("Offline", Style::default().fg(Color::Red))
+                    Span::styled(" ", Style::default().fg(Color::Red))
+                };
+                let trust_indicator = match d.trust_level {
+                    DisplayTrustLevel::Trusted | DisplayTrustLevel::FullyTrusted => {
+                        Span::styled(" [T]", Style::default().fg(Color::Green))
+                    }
+                    DisplayTrustLevel::Revoked => {
+                        Span::styled(" [X]", Style::default().fg(Color::Red))
+                    }
+                    DisplayTrustLevel::Unknown => {
+                        Span::styled(" [?]", Style::default().fg(Color::Yellow))
+                    }
                 };
                 let content = Line::from(vec![
-                    Span::styled(&d.name, Style::default().fg(Color::Cyan)),
-                    Span::raw(" | "),
-                    Span::styled(
-                        &d.id[..8.min(d.id.len())],
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::raw(" | "),
                     status,
+                    Span::raw(" "),
+                    Span::styled(&d.name, Style::default().fg(Color::Cyan)),
+                    trust_indicator,
                 ]);
                 ListItem::new(content)
             })
@@ -958,7 +1131,10 @@ impl TuiApp {
             )
             .highlight_symbol("> ");
 
-        frame.render_stateful_widget(list, area, list_state);
+        frame.render_stateful_widget(list, chunks[0], list_state);
+
+        // Render the device details
+        Self::render_device_detail(frame, chunks[1], devices, list_state.selected());
     }
 
     /// Renders the approvals tab content.
@@ -1410,6 +1586,7 @@ mod tests {
         let _ = TuiEvent::DeviceConnected {
             device_id: "test".to_string(),
             name: "Test Device".to_string(),
+            trust_level: DisplayTrustLevel::Unknown,
         };
         let _ = TuiEvent::DeviceDisconnected {
             device_id: "test".to_string(),
@@ -1448,10 +1625,31 @@ mod tests {
             id: "device-123".to_string(),
             name: "My Device".to_string(),
             connected: true,
+            trust_level: DisplayTrustLevel::Trusted,
+            last_seen: "Just now".to_string(),
+            session_count: 2,
         };
         assert_eq!(device.id, "device-123");
         assert_eq!(device.name, "My Device");
         assert!(device.connected);
+        assert_eq!(device.trust_level, DisplayTrustLevel::Trusted);
+        assert_eq!(device.last_seen, "Just now");
+        assert_eq!(device.session_count, 2);
+    }
+
+    #[test]
+    fn test_display_trust_level() {
+        // Test color mapping
+        assert_eq!(DisplayTrustLevel::Unknown.color(), Color::Yellow);
+        assert_eq!(DisplayTrustLevel::Trusted.color(), Color::Green);
+        assert_eq!(DisplayTrustLevel::FullyTrusted.color(), Color::Cyan);
+        assert_eq!(DisplayTrustLevel::Revoked.color(), Color::Red);
+
+        // Test string representation
+        assert_eq!(DisplayTrustLevel::Unknown.as_str(), "Unknown");
+        assert_eq!(DisplayTrustLevel::Trusted.as_str(), "Trusted");
+        assert_eq!(DisplayTrustLevel::FullyTrusted.as_str(), "Fully Trusted");
+        assert_eq!(DisplayTrustLevel::Revoked.as_str(), "Revoked");
     }
 
     #[test]
@@ -1558,6 +1756,7 @@ mod tests {
         tx.send(TuiEvent::DeviceConnected {
             device_id: "dev1".to_string(),
             name: "Test Device".to_string(),
+            trust_level: DisplayTrustLevel::Trusted,
         })
         .await
         .unwrap();
@@ -1565,9 +1764,14 @@ mod tests {
         // Verify it can be received
         let event = rx.recv().await.unwrap();
         match event {
-            TuiEvent::DeviceConnected { device_id, name } => {
+            TuiEvent::DeviceConnected {
+                device_id,
+                name,
+                trust_level,
+            } => {
                 assert_eq!(device_id, "dev1");
                 assert_eq!(name, "Test Device");
+                assert_eq!(trust_level, DisplayTrustLevel::Trusted);
             }
             _ => panic!("Unexpected event type"),
         }
