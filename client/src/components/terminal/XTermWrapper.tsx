@@ -14,8 +14,8 @@ import {
 const HIGH_WATERMARK = 500 * 1024; // 500KB - pause when buffer exceeds this
 const LOW_WATERMARK = 100 * 1024;  // 100KB - resume when buffer drops below this
 
-/** Performance optimization: scrollback limit for memory efficiency */
-const SCROLLBACK_LIMIT = 3000;
+/** Default scrollback limit for memory efficiency (configurable via scrollbackLimit prop) */
+const DEFAULT_SCROLLBACK_LIMIT = 3000;
 
 /** Write counter for unique timing IDs */
 let writeCounter = 0;
@@ -63,6 +63,8 @@ export interface XTermWrapperProps {
   class?: string;
   /** Callback ref for parent access to terminal handle */
   ref?: (handle: XTermWrapperHandle) => void;
+  /** Scrollback buffer limit in lines (default: 3000) */
+  scrollbackLimit?: number;
 }
 
 export interface XTermWrapperHandle {
@@ -156,7 +158,7 @@ const XTermWrapper: Component<XTermWrapperProps> = (props) => {
       fontSize: 14,
       lineHeight: 1.2,
       // Performance: limit scrollback to reduce memory usage
-      scrollback: SCROLLBACK_LIMIT,
+      scrollback: props.scrollbackLimit ?? DEFAULT_SCROLLBACK_LIMIT,
       // Performance: enable fast scroll with alt key
       fastScrollModifier: 'alt',
       fastScrollSensitivity: 5,
