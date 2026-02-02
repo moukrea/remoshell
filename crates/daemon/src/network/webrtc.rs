@@ -96,6 +96,8 @@ impl From<IceServer> for RTCIceServer {
 pub struct WebRtcConfig {
     /// ICE servers for connectivity.
     pub ice_servers: Vec<IceServer>,
+    /// Timeout for ICE candidate gathering.
+    pub ice_gathering_timeout: Duration,
 }
 
 impl Default for WebRtcConfig {
@@ -105,6 +107,7 @@ impl Default for WebRtcConfig {
                 .iter()
                 .map(|&url| IceServer::stun(url))
                 .collect(),
+            ice_gathering_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -112,7 +115,10 @@ impl Default for WebRtcConfig {
 impl WebRtcConfig {
     /// Creates a new WebRTC configuration with custom ICE servers.
     pub fn with_ice_servers(ice_servers: Vec<IceServer>) -> Self {
-        Self { ice_servers }
+        Self {
+            ice_servers,
+            ice_gathering_timeout: Duration::from_secs(30),
+        }
     }
 
     /// Adds an ICE server to the configuration.
@@ -179,6 +185,8 @@ pub struct WebRtcConnectionHandler {
     connected: Arc<RwLock<bool>>,
     /// Remote peer's X25519 public key (from Noise handshake).
     peer_public_key: Arc<RwLock<Option<[u8; 32]>>>,
+    /// WebRTC configuration (stored for ICE gathering timeout).
+    config: WebRtcConfig,
 }
 
 impl WebRtcConnectionHandler {
@@ -237,6 +245,7 @@ impl WebRtcConnectionHandler {
             message_tx: Arc::new(RwLock::new(message_tx)),
             connected: Arc::new(RwLock::new(false)),
             peer_public_key: Arc::new(RwLock::new(None)),
+            config,
         };
 
         // Set up connection state change handler
@@ -435,29 +444,82 @@ impl WebRtcConnectionHandler {
     }
 
     /// Waits for the ICE gathering to complete and returns the local description.
+    ///
+    /// This method:
+    /// - Uses configurable timeout from `WebRtcConfig::ice_gathering_timeout`
+    /// - Requires at least one ICE candidate to be gathered
+    /// - Returns an error if gathering times out or no candidates are found
+    /// - Logs candidate count and types for debugging
     pub async fn gather_ice_candidates(&self) -> Result<RTCSessionDescription> {
-        // Wait for ICE gathering to complete
-        let (tx, mut rx) = mpsc::channel(1);
+        // Channel to signal gathering completion
+        let (complete_tx, mut complete_rx) = mpsc::channel(1);
+        // Channel to collect candidates
+        let (candidate_tx, mut candidate_rx) = mpsc::channel::<String>(64);
 
+        // Track ICE candidates as they are discovered
+        self.peer_connection
+            .on_ice_candidate(Box::new(move |candidate| {
+                let candidate_tx = candidate_tx.clone();
+                Box::pin(async move {
+                    if let Some(c) = candidate {
+                        // Send candidate type for logging
+                        let typ = format!("{:?}", c.typ);
+                        let _ = candidate_tx.send(typ).await;
+                    }
+                })
+            }));
+
+        // Track gathering state changes
         self.peer_connection.on_ice_gathering_state_change(Box::new(
             move |state: webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState| {
-                let tx = tx.clone();
+                let complete_tx = complete_tx.clone();
                 Box::pin(async move {
                     if state
                         == webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState::Complete
                     {
-                        let _ = tx.send(()).await;
+                        let _ = complete_tx.send(()).await;
                     }
                 })
             },
         ));
 
-        // Wait for gathering to complete (with timeout)
-        tokio::select! {
-            _ = rx.recv() => {}
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
-                tracing::warn!("ICE gathering timeout, proceeding with current candidates");
-            }
+        // Wait for gathering to complete with configurable timeout
+        let timeout = self.config.ice_gathering_timeout;
+        let timed_out = tokio::select! {
+            _ = complete_rx.recv() => false,
+            _ = tokio::time::sleep(timeout) => true,
+        };
+
+        // Collect all received candidate types
+        candidate_rx.close();
+        let mut candidate_types: Vec<String> = Vec::new();
+        while let Ok(typ) = candidate_rx.try_recv() {
+            candidate_types.push(typ);
+        }
+
+        let candidate_count = candidate_types.len();
+
+        // Log candidate information
+        tracing::info!("ICE gathering complete: {} candidates", candidate_count);
+        for (i, typ) in candidate_types.iter().enumerate() {
+            tracing::debug!("  Candidate {}: type={}", i + 1, typ);
+        }
+
+        // Handle timeout
+        if timed_out {
+            tracing::error!("ICE gathering timed out after {:?}", timeout);
+            return Err(ProtocolError::HandshakeFailed(format!(
+                "ICE gathering timed out after {:?}",
+                timeout
+            )));
+        }
+
+        // Require at least one candidate
+        if candidate_count == 0 {
+            tracing::error!("ICE gathering failed: no candidates found");
+            return Err(ProtocolError::HandshakeFailed(
+                "No ICE candidates gathered".into(),
+            ));
         }
 
         self.peer_connection
