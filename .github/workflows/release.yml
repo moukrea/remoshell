@@ -136,11 +136,13 @@ jobs:
           echo "=== Generated Changelog ==="
           cat CHANGES.md
 
-          # Output changelog content using unique delimiter
-          DELIMITER="CHANGELOG_CONTENT_$(date +%s)"
-          echo "content<<${DELIMITER}" >> $GITHUB_OUTPUT
-          cat CHANGES.md >> $GITHUB_OUTPUT
-          echo "${DELIMITER}" >> $GITHUB_OUTPUT
+          # Output changelog content using heredoc
+          {
+            echo "content<<CHANGELOG_EOF"
+            cat CHANGES.md
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> $GITHUB_OUTPUT
 
   # ========== DAEMON BUILD (Linux only for now) ==========
   build-daemon:
