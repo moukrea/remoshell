@@ -8,6 +8,8 @@
  * - Write batcher correctness
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   setProfilingEnabled,
@@ -384,18 +386,46 @@ describe('Write Batcher', () => {
 });
 
 describe('Bundle Size Targets', () => {
-  // Note: These are placeholder tests. In a real scenario,
-  // you would read actual bundle sizes from the build output.
+  const distPath = path.resolve(__dirname, '../../dist');
+  const distExists = fs.existsSync(distPath);
 
-  it('should document bundle size target of < 500KB', () => {
-    const TARGET_BUNDLE_SIZE_KB = 500;
-    expect(TARGET_BUNDLE_SIZE_KB).toBe(500);
+  it('should have total bundle size under 500KB', () => {
+    if (!distExists) {
+      console.log('Skipping bundle size test: dist/ directory not found (run npm run build first)');
+      return;
+    }
+
+    const files = fs.readdirSync(distPath);
+    const jsFiles = files.filter(f => f.endsWith('.js'));
+
+    let totalSize = 0;
+    for (const file of jsFiles) {
+      const stat = fs.statSync(path.join(distPath, file));
+      totalSize += stat.size;
+    }
+
+    const totalKB = totalSize / 1024;
+    expect(totalKB).toBeLessThan(500);
   });
 
-  it('should document initial load target of < 200KB', () => {
-    // The initial bundle (without lazy-loaded chunks) should be smaller
-    const TARGET_INITIAL_SIZE_KB = 200;
-    expect(TARGET_INITIAL_SIZE_KB).toBe(200);
+  it('should have initial load bundle under 200KB', () => {
+    if (!distExists) {
+      console.log('Skipping initial load test: dist/ directory not found');
+      return;
+    }
+
+    const files = fs.readdirSync(distPath);
+    // Main entry bundle (not lazy-loaded chunks)
+    const mainBundle = files.find(f => f.match(/^index.*\.js$/));
+
+    if (!mainBundle) {
+      console.log('Skipping: main bundle not found');
+      return;
+    }
+
+    const stat = fs.statSync(path.join(distPath, mainBundle));
+    const sizeKB = stat.size / 1024;
+    expect(sizeKB).toBeLessThan(200);
   });
 });
 
