@@ -44,6 +44,7 @@ const Toast: Component<ToastProps> = (props) => {
   const store = getNotificationStore();
   const [isEntering, setIsEntering] = createSignal(true);
   const [isExiting, setIsExiting] = createSignal(false);
+  const [executingActions, setExecutingActions] = createSignal<Set<number>>(new Set());
 
   let toastRef: HTMLDivElement | undefined;
 
@@ -89,9 +90,19 @@ const Toast: Component<ToastProps> = (props) => {
     store.resumeTimer(props.notification.id);
   };
 
-  const handleActionClick = (onClick: () => void) => {
-    onClick();
-    store.dismiss(props.notification.id);
+  const handleActionClick = async (index: number, onClick: () => void | Promise<void>) => {
+    if (executingActions().has(index)) return;
+    setExecutingActions(prev => new Set([...prev, index]));
+    try {
+      await onClick();
+      store.dismiss(props.notification.id);
+    } finally {
+      setExecutingActions(prev => {
+        const next = new Set(prev);
+        next.delete(index);
+        return next;
+      });
+    }
   };
 
   return (
@@ -136,7 +147,8 @@ const Toast: Component<ToastProps> = (props) => {
               {(action, index) => (
                 <button
                   class="toast__action"
-                  onClick={() => handleActionClick(action.onClick)}
+                  disabled={executingActions().has(index())}
+                  onClick={() => handleActionClick(index(), action.onClick)}
                   data-testid={`toast-action-${props.notification.id}-${index()}`}
                 >
                   {action.label}
