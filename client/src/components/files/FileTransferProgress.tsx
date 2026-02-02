@@ -296,6 +296,14 @@ const FileTransferProgress: Component<FileTransferProgressProps> = (props) => {
     store.clearCompletedTransfers();
   };
 
+  const handleRetry = (transfer: FileTransfer) => {
+    if (transfer.direction === 'download') {
+      store.retryDownload(transfer);
+    } else {
+      store.retryUpload(transfer);
+    }
+  };
+
   // Calculate overall progress for summary
   const overallProgress = createMemo(() => {
     const active = store.getActiveTransfers();
@@ -375,6 +383,7 @@ const FileTransferProgress: Component<FileTransferProgressProps> = (props) => {
                 transfer={transfer}
                 onCancel={handleCancel}
                 onRemove={handleRemove}
+                onRetry={handleRetry}
               />
             )}
           </For>

@@ -93,7 +93,9 @@ export type FileEventType =
   | 'transfer:progress'
   | 'transfer:completed'
   | 'transfer:failed'
-  | 'transfer:cancelled';
+  | 'transfer:cancelled'
+  | 'transfer:download:retry'
+  | 'transfer:upload:retry';
 
 /**
  * Event payload types
@@ -219,6 +221,8 @@ export function createFileStore() {
   const downloadBuffers = new Map<string, DownloadBuffer>();
   // Map from file path to transfer ID for looking up transfers by path
   const pathToTransferId = new Map<string, string>();
+  // Store original File objects for potential upload retries
+  const uploadFiles = new Map<string, File>();
 
   /**
    * Emit an event to all subscribers
@@ -450,6 +454,9 @@ export function createFileStore() {
       })
     );
 
+    // Store file reference for potential retry
+    uploadFiles.set(transferId, file);
+
     emit({
       type: 'files:upload',
       path: filePath,
@@ -549,11 +556,85 @@ export function createFileStore() {
    * Remove a completed/failed/cancelled transfer from the list
    */
   const removeTransfer = (transferId: string): void => {
+    // Clean up stored file reference
+    uploadFiles.delete(transferId);
     setState(
       produce((s) => {
         delete s.transfers[transferId];
       })
     );
+  };
+
+  /**
+   * Retry a failed download transfer
+   */
+  const retryDownload = (transfer: FileTransfer): void => {
+    // Reset the transfer status
+    setState(
+      produce((s) => {
+        const t = s.transfers[transfer.id];
+        if (t) {
+          t.status = 'pending';
+          t.transferredBytes = 0;
+          t.error = undefined;
+          t.startedAt = Date.now();
+          t.completedAt = undefined;
+        }
+      })
+    );
+
+    // Re-register path to transfer ID mapping
+    pathToTransferId.set(transfer.filePath, transfer.id);
+
+    // Emit event to trigger download retry
+    emit({
+      type: 'transfer:download:retry',
+      transferId: transfer.id,
+      path: transfer.filePath,
+      data: {
+        path: transfer.filePath,
+        offset: 0,
+      },
+    });
+  };
+
+  /**
+   * Retry a failed upload transfer
+   * Note: Requires the original File object to be stored
+   */
+  const retryUpload = (transfer: FileTransfer): void => {
+    const originalFile = uploadFiles.get(transfer.id);
+
+    if (!originalFile) {
+      // File no longer available - mark as permanent failure
+      failTransfer(transfer.id, 'Original file no longer available. Please select the file again.');
+      return;
+    }
+
+    // Reset the transfer status
+    setState(
+      produce((s) => {
+        const t = s.transfers[transfer.id];
+        if (t) {
+          t.status = 'pending';
+          t.transferredBytes = 0;
+          t.error = undefined;
+          t.startedAt = Date.now();
+          t.completedAt = undefined;
+        }
+      })
+    );
+
+    // Emit event to trigger upload retry
+    emit({
+      type: 'transfer:upload:retry',
+      transferId: transfer.id,
+      path: transfer.filePath,
+      data: {
+        file: originalFile,
+        path: transfer.filePath,
+      },
+    });
   };
 
   /**
@@ -773,6 +854,8 @@ export function createFileStore() {
     receiveChunk,
     findTransferByPath,
     failDownloadByPath,
+    retryDownload,
+    retryUpload,
 
     // Sort/filter actions
     setSort,

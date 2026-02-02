@@ -576,6 +576,27 @@ export class ConnectionOrchestrator {
           }
         }
         break;
+      case 'transfer:download:retry':
+        if (event.path && event.transferId) {
+          this.fileStore?.setTransferStarted(event.transferId);
+          this.sendFileDownloadRequest(event.path, 0);
+        }
+        break;
+      case 'transfer:upload:retry':
+        if (event.path && event.transferId && event.data) {
+          const uploadData = event.data as { file: File; path: string };
+          if (uploadData.file) {
+            this.fileStore?.setTransferStarted(event.transferId);
+            this.uploadFile(uploadData.file, uploadData.path, (progress) => {
+              this.fileStore?.updateTransferProgress(event.transferId!, progress.bytesSent);
+            }).then(() => {
+              this.fileStore?.completeTransfer(event.transferId!);
+            }).catch((error) => {
+              this.fileStore?.failTransfer(event.transferId!, error.message);
+            });
+          }
+        }
+        break;
     }
   };
 
