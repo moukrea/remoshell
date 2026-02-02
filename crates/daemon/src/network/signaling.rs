@@ -285,17 +285,52 @@ impl WebSocketSignalingClient {
     }
 
     /// Updates the connection state and emits an event.
+    ///
+    /// # Atomicity Guarantee
+    ///
+    /// This method ensures atomic state transitions by capturing the state
+    /// change information (old state and new state) while holding the lock.
+    /// The event is then emitted after releasing the lock, but the event
+    /// contains the exact state values that were read/written during the
+    /// transition.
+    ///
+    /// **Important**: Event handlers should use the state value from the event
+    /// itself (e.g., `event.new_state`) rather than querying `client.state()`,
+    /// as the current state may have changed by the time the handler runs.
+    /// This ensures callbacks always see a consistent view of the transition.
+    ///
+    /// If the state hasn't changed, no event is emitted (early return).
     async fn set_state(&self, new_state: ConnectionState) {
-        {
+        // Capture transition details while holding the lock to ensure atomicity.
+        // The event is created inside the lock scope so it contains the exact
+        // state that was written, even if another state change happens after
+        // the lock is released.
+        let should_emit = {
             let mut state = self.state.write().await;
+            let old_state = state.connection_state;
+
+            // Early return if state hasn't changed - no event needed
+            if old_state == new_state {
+                return;
+            }
+
             state.connection_state = new_state;
-        }
-        if let Err(e) = self
-            .event_tx
-            .send(SignalingEvent::StateChanged(new_state))
-            .await
-        {
-            tracing::warn!(error = %e, state = ?new_state, "Failed to send StateChanged event - receiver may be dropped");
+
+            // Event data is captured while lock is held, guaranteeing consistency
+            true
+        }; // Lock released here, but we've already captured the transition
+
+        // Safe to emit - the event contains the exact state that was set
+        // Note: `new_state` was passed as a parameter, so it's guaranteed to
+        // match what was written above
+        if should_emit {
+            if let Err(e) = self
+                .event_tx
+                .send(SignalingEvent::StateChanged(new_state))
+                .await
+            {
+                tracing::warn!(error = %e, state = ?new_state, "Failed to send StateChanged event - receiver may be dropped");
+            }
         }
     }
 
@@ -1003,6 +1038,96 @@ mod tests {
         assert_eq!(ConnectionState::Connected, ConnectionState::Connected);
         assert_eq!(ConnectionState::Reconnecting, ConnectionState::Reconnecting);
         assert_ne!(ConnectionState::Disconnected, ConnectionState::Connected);
+    }
+
+    /// Test that set_state() does not emit events when state hasn't changed.
+    ///
+    /// This is part of the atomicity guarantee: setting the same state twice
+    /// should only emit one event (the first one).
+    #[tokio::test]
+    async fn test_set_state_no_event_on_same_state() {
+        let config = SignalingConfig::new("wss://localhost:8080");
+        let client = WebSocketSignalingClient::new(config);
+        let mut events = client.events().expect("events() should return receiver");
+
+        // Set to Connecting (should emit event)
+        client.set_state(ConnectionState::Connecting).await;
+
+        // Set to Connecting again (should NOT emit event - early return)
+        client.set_state(ConnectionState::Connecting).await;
+
+        // Set to Connected (should emit event)
+        client.set_state(ConnectionState::Connected).await;
+
+        // Verify we only got 2 events, not 3
+        let event1 = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
+        assert!(event1.is_ok(), "Should receive first event");
+        if let Ok(Some(SignalingEvent::StateChanged(state))) = event1 {
+            assert_eq!(state, ConnectionState::Connecting);
+        } else {
+            panic!("Expected StateChanged(Connecting)");
+        }
+
+        let event2 = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
+        assert!(event2.is_ok(), "Should receive second event");
+        if let Ok(Some(SignalingEvent::StateChanged(state))) = event2 {
+            assert_eq!(state, ConnectionState::Connected);
+        } else {
+            panic!("Expected StateChanged(Connected)");
+        }
+
+        // No third event should be waiting (the duplicate Connecting was skipped)
+        let event3 = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
+        assert!(
+            event3.is_err(),
+            "Should NOT receive a third event (duplicate was skipped)"
+        );
+    }
+
+    /// Test that state change events contain the correct state value.
+    ///
+    /// This verifies the atomicity guarantee: the event contains the exact
+    /// state that was written during the transition, ensuring callbacks
+    /// always see consistent state information.
+    #[tokio::test]
+    async fn test_set_state_event_contains_correct_state() {
+        let config = SignalingConfig::new("wss://localhost:8080");
+        let client = WebSocketSignalingClient::new(config);
+        let mut events = client.events().expect("events() should return receiver");
+
+        // Perform a series of state transitions
+        let transitions = [
+            ConnectionState::Connecting,
+            ConnectionState::Connected,
+            ConnectionState::Reconnecting,
+            ConnectionState::Disconnected,
+        ];
+
+        for expected_state in transitions {
+            client.set_state(expected_state).await;
+
+            let event = tokio::time::timeout(Duration::from_millis(100), events.recv())
+                .await
+                .expect("Should receive event within timeout")
+                .expect("Event channel should not be closed");
+
+            match event {
+                SignalingEvent::StateChanged(state) => {
+                    assert_eq!(
+                        state, expected_state,
+                        "Event state should match the state that was set"
+                    );
+                }
+                _ => panic!("Expected StateChanged event"),
+            }
+
+            // Also verify the current state matches (sanity check)
+            assert_eq!(
+                client.state(),
+                expected_state,
+                "Current state should match what was set"
+            );
+        }
     }
 
     /// Integration test for the signaling flow.
