@@ -867,26 +867,65 @@ async fn run_systemd_mode(orchestrator: &mut DaemonOrchestrator) -> anyhow::Resu
 
 /// Run the daemon with TUI interface.
 async fn run_with_tui(orchestrator: &mut DaemonOrchestrator) -> anyhow::Result<()> {
+    use daemon::ui::tui::{process_approval_result, TuiApp, TuiEvent};
+
     // Start the orchestrator
     orchestrator.start().await?;
 
+    // Create TUI app
+    let (mut tui_app, tui_tx) = TuiApp::new()?;
+
+    // Take the approval receiver to handle approval results
+    let mut approval_rx = tui_app
+        .take_approval_receiver()
+        .expect("Approval receiver should be available");
+
     // Get device ID for display
     let device_id = orchestrator.device_id_fingerprint();
+    tracing::info!("TUI mode started - Device ID: {}", device_id);
 
-    // Create TUI app
-    // Note: TuiApp would need to be adapted to work with the orchestrator
-    // For now, we'll use a simplified approach
-    tracing::info!("TUI mode - Device ID: {}", device_id);
-    tracing::info!("Press Ctrl+C to stop");
+    // Clone trust store for approval handling
+    let trust_store = orchestrator.trust_store().clone();
 
-    // Wait for shutdown signal (SIGTERM or SIGINT)
-    wait_for_shutdown_signal().await;
-    tracing::info!("Received shutdown signal");
+    // Spawn task to process approval results
+    let approval_trust_store = trust_store.clone();
+    let approval_handle = tokio::spawn(async move {
+        while let Some(result) = approval_rx.recv().await {
+            if let Err(e) = process_approval_result(&result, &approval_trust_store) {
+                tracing::error!("Failed to process approval result: {}", e);
+            }
+        }
+    });
+
+    // Spawn task to forward orchestrator events to TUI
+    // This would require adding an event subscription mechanism to the orchestrator
+    // For now, we'll use a periodic stats update
+    let stats_tx = tui_tx.clone();
+    let stats_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            // Send refresh event to update stats display
+            if stats_tx.send(TuiEvent::Refresh).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Run the TUI event loop
+    let result = tui_app.run().await;
+
+    // Cleanup
+    stats_handle.abort();
+    approval_handle.abort();
+
+    // Restore terminal
+    tui_app.restore()?;
 
     // Stop the orchestrator
     orchestrator.stop().await?;
 
-    Ok(())
+    result.map_err(|e| anyhow::anyhow!("TUI error: {}", e))
 }
 
 #[cfg(test)]
