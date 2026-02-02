@@ -7,8 +7,16 @@ import { getSignalingClient, SignalingClient, type AnySignalingEvent } from '../
 import { getWebRTCManager, WebRTCManager, type WebRTCEvent, type SignalData } from '../webrtc/WebRTCManager';
 import { getConnectionStore, type ConnectionStore } from '../../stores/connection';
 import { getSessionStore, type SessionStore, type SessionEvent } from '../../stores/sessions';
+import { getFileStore, type FileStore, type FileEvent, type FileEntry as StoreFileEntry } from '../../stores/files';
 import { getConfig } from '../../config';
-import { encodeEnvelope, decodeEnvelope, createEnvelope, Msg, type SessionData } from '../protocol';
+import {
+  encodeEnvelope,
+  decodeEnvelope,
+  createEnvelope,
+  Msg,
+  type SessionData,
+  type FileEntry as ProtocolFileEntry,
+} from '../protocol';
 
 /**
  * Data received callback type
@@ -29,6 +37,7 @@ export class ConnectionOrchestrator {
   private webrtc: WebRTCManager | null = null;
   private store: ConnectionStore | null = null;
   private sessionStore: SessionStore | null = null;
+  private fileStore: FileStore | null = null;
   private initialized = false;
   private initializing = false;
   private state: OrchestratorState = 'idle';
@@ -37,6 +46,7 @@ export class ConnectionOrchestrator {
   private signalingUnsubscribe: (() => void) | null = null;
   private webrtcUnsubscribe: (() => void) | null = null;
   private sessionUnsubscribe: (() => void) | null = null;
+  private fileUnsubscribe: (() => void) | null = null;
   private messageSequence = 0;
 
   /**
@@ -68,6 +78,10 @@ export class ConnectionOrchestrator {
 
       // Wire up session store events
       this.sessionUnsubscribe = this.sessionStore.subscribe(this.handleSessionEvent);
+
+      // Wire up file store events
+      this.fileStore = getFileStore();
+      this.fileUnsubscribe = this.fileStore.subscribe(this.handleFileEvent);
 
       this.initialized = true;
       this.state = 'initialized';
@@ -387,6 +401,51 @@ export class ConnectionOrchestrator {
       }
     }
 
+    // Handle files channel data
+    if (channel === 'files') {
+      try {
+        const envelope = decodeEnvelope(data);
+        const message = envelope.payload;
+
+        if (message.type === 'FileListResponse') {
+          const responseData = message.data as { path: string; entries: ProtocolFileEntry[] };
+          // Convert protocol entries to store entries
+          const storeEntries: StoreFileEntry[] = responseData.entries.map((entry) => ({
+            name: entry.name,
+            path: `${responseData.path}/${entry.name}`.replace(/\/+/g, '/'),
+            type: this.mapEntryType(entry.entry_type),
+            size: entry.size,
+            modifiedAt: entry.modified * 1000, // Convert to milliseconds
+            permissions: this.parsePermissions(entry.mode),
+            isHidden: entry.name.startsWith('.'),
+          }));
+          this.fileStore?.setEntries(storeEntries);
+        }
+
+        if (message.type === 'FileDownloadChunk') {
+          const chunkData = message.data as {
+            path: string;
+            offset: number;
+            total_size: number;
+            data: Uint8Array;
+            is_last: boolean;
+          };
+          // Update transfer progress in store
+          // The store would need a method to handle incoming chunks
+          console.log('[Orchestrator] Received file chunk:', chunkData.path, chunkData.offset, chunkData.is_last);
+          // For now, just log - full implementation would accumulate chunks and trigger browser download
+        }
+
+        if (message.type === 'Error') {
+          const errorData = message.data as { message: string };
+          console.error('[Orchestrator] File operation error:', errorData.message);
+          this.fileStore?.setError(errorData.message);
+        }
+      } catch (error) {
+        console.error('[Orchestrator] Error processing file data:', error);
+      }
+    }
+
     // Notify all registered data handlers
     for (const handler of this.dataHandlers) {
       try {
@@ -404,6 +463,34 @@ export class ConnectionOrchestrator {
     const errorMessage = error?.message ?? 'Unknown peer error';
     this.store?.disconnectPeer(peerId, errorMessage);
   };
+
+  /**
+   * Map protocol entry type to store file type
+   */
+  private mapEntryType(entryType: string): 'file' | 'directory' | 'symlink' | 'unknown' {
+    switch (entryType) {
+      case 'File':
+        return 'file';
+      case 'Directory':
+        return 'directory';
+      case 'Symlink':
+        return 'symlink';
+      default:
+        return 'unknown';
+    }
+  }
+
+  /**
+   * Parse Unix permissions mode to FilePermissions object
+   */
+  private parsePermissions(mode: number): { read: boolean; write: boolean; execute: boolean } {
+    // Parse owner permissions from Unix mode (bits 8-6)
+    return {
+      read: (mode & 0o400) !== 0,
+      write: (mode & 0o200) !== 0,
+      execute: (mode & 0o100) !== 0,
+    };
+  }
 
   /**
    * Handle session store events (input, resize, created, closed)
@@ -437,6 +524,45 @@ export class ConnectionOrchestrator {
       }
     }
   };
+
+  /**
+   * Handle file store events (navigate, refresh, download, upload)
+   */
+  private handleFileEvent = (event: FileEvent): void => {
+    switch (event.type) {
+      case 'files:navigate':
+      case 'files:refresh':
+        if (event.path) {
+          this.sendFileListRequest(event.path);
+        }
+        break;
+      case 'files:download':
+        if (event.path && event.transferId) {
+          // Start download by requesting the first chunk
+          this.sendFileDownloadRequest(event.path, 0);
+        }
+        break;
+      case 'files:upload':
+        if (event.path && event.transferId && event.data) {
+          const uploadData = event.data as { file: File };
+          if (uploadData.file) {
+            this.sendFileUploadStart(event.path, uploadData.file.size, 0o644);
+          }
+        }
+        break;
+    }
+  };
+
+  /**
+   * Get the first connected peer (for file operations when no specific peer is needed)
+   */
+  private getFirstConnectedPeer(): string | undefined {
+    // Get first peer from session-peer map
+    for (const [, peerId] of this.sessionPeerMap.entries()) {
+      return peerId;
+    }
+    return undefined;
+  }
 
   /**
    * Send terminal input to a peer
@@ -483,6 +609,97 @@ export class ConnectionOrchestrator {
   }
 
   /**
+   * Send a file list request to a peer
+   */
+  private sendFileListRequest(path: string): void {
+    const peerId = this.getFirstConnectedPeer();
+    if (!peerId || !this.webrtc) {
+      console.warn('[Orchestrator] Cannot send file list request: no connected peer');
+      this.fileStore?.setError('No connected peer');
+      return;
+    }
+
+    const message = Msg.FileListRequest({
+      path,
+      include_hidden: this.fileStore?.state.showHidden ?? false,
+    });
+
+    const envelope = createEnvelope(++this.messageSequence, message);
+    const encoded = encodeEnvelope(envelope);
+
+    this.webrtc.sendData(peerId, encoded, 'files');
+  }
+
+  /**
+   * Send a file download request to a peer
+   */
+  private sendFileDownloadRequest(path: string, offset: number): void {
+    const peerId = this.getFirstConnectedPeer();
+    if (!peerId || !this.webrtc) {
+      console.warn('[Orchestrator] Cannot send file download request: no connected peer');
+      return;
+    }
+
+    const message = Msg.FileDownloadRequest({
+      path,
+      offset,
+      chunk_size: 65536, // 64KB chunks
+    });
+
+    const envelope = createEnvelope(++this.messageSequence, message);
+    const encoded = encodeEnvelope(envelope);
+
+    this.webrtc.sendData(peerId, encoded, 'files');
+  }
+
+  /**
+   * Send a file upload start request to a peer
+   */
+  private sendFileUploadStart(path: string, size: number, mode: number): void {
+    const peerId = this.getFirstConnectedPeer();
+    if (!peerId || !this.webrtc) {
+      console.warn('[Orchestrator] Cannot send file upload start: no connected peer');
+      return;
+    }
+
+    const message = Msg.FileUploadStart({
+      path,
+      size,
+      mode,
+      overwrite: true,
+    });
+
+    const envelope = createEnvelope(++this.messageSequence, message);
+    const encoded = encodeEnvelope(envelope);
+
+    this.webrtc.sendData(peerId, encoded, 'files');
+  }
+
+  /**
+   * Send a file upload chunk to a peer.
+   * This method is public to allow external code to send upload chunks
+   * as they are read from files.
+   */
+  sendFileUploadChunk(path: string, offset: number, data: Uint8Array): void {
+    const peerId = this.getFirstConnectedPeer();
+    if (!peerId || !this.webrtc) {
+      console.warn('[Orchestrator] Cannot send file upload chunk: no connected peer');
+      return;
+    }
+
+    const message = Msg.FileUploadChunk({
+      path,
+      offset,
+      data,
+    });
+
+    const envelope = createEnvelope(++this.messageSequence, message);
+    const encoded = encodeEnvelope(envelope);
+
+    this.webrtc.sendData(peerId, encoded, 'files');
+  }
+
+  /**
    * Clean up and destroy the orchestrator
    */
   destroy(): void {
@@ -490,6 +707,7 @@ export class ConnectionOrchestrator {
     this.signalingUnsubscribe?.();
     this.webrtcUnsubscribe?.();
     this.sessionUnsubscribe?.();
+    this.fileUnsubscribe?.();
 
     // Disconnect everything
     this.disconnect();
@@ -502,6 +720,7 @@ export class ConnectionOrchestrator {
     this.webrtc = null;
     this.store = null;
     this.sessionStore = null;
+    this.fileStore = null;
     this.initialized = false;
     this.state = 'idle';
     this.messageSequence = 0;
