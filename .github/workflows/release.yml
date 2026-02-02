@@ -89,23 +89,56 @@ jobs:
 
       - name: Generate changelog
         id: changelog
-        uses: orhun/git-cliff-action@v4
-        with:
-          config: cliff.toml
-          args: --unreleased --strip header
-        env:
-          OUTPUT: CHANGES.md
-
-      - name: Read changelog
-        id: read_changelog
         run: |
-          if [ -f CHANGES.md ]; then
-            CONTENT=$(cat CHANGES.md)
+          # Function to generate fallback changelog using git log
+          generate_fallback_changelog() {
+            local prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$prev_tag" ]; then
+              echo "## What's Changed"
+              echo ""
+              git log --pretty=format:"- %s (%h)" ${prev_tag}..HEAD | head -100
+            else
+              echo "## Initial Release"
+              echo ""
+              git log --pretty=format:"- %s (%h)" | head -50
+            fi
+          }
+
+          USE_FALLBACK=false
+
+          # Try git-cliff first
+          if command -v git-cliff &> /dev/null && [ -f cliff.toml ]; then
+            echo "Generating changelog with git-cliff..."
+            if git cliff --unreleased --strip header > CHANGES.md 2>/dev/null && [ -s CHANGES.md ]; then
+              echo "Generated changelog with git-cliff"
+            else
+              echo "::warning::git-cliff failed or produced empty output, falling back to git log"
+              USE_FALLBACK=true
+            fi
           else
-            CONTENT="No changes documented"
+            echo "::warning::git-cliff not available or cliff.toml missing, using git log fallback"
+            USE_FALLBACK=true
           fi
+
+          # Fallback to git log if needed
+          if [ "$USE_FALLBACK" = "true" ]; then
+            generate_fallback_changelog > CHANGES.md
+          fi
+
+          # Validate changelog is not empty
+          if [ ! -s CHANGES.md ]; then
+            echo "::warning::Changelog is empty after generation, creating minimal changelog"
+            echo "## Release" > CHANGES.md
+            echo "" >> CHANGES.md
+            echo "No changes documented for this release." >> CHANGES.md
+          fi
+
+          echo "=== Generated Changelog ==="
+          cat CHANGES.md
+
+          # Output changelog content
           echo "content<<EOF" >> $GITHUB_OUTPUT
-          echo "$CONTENT" >> $GITHUB_OUTPUT
+          cat CHANGES.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
   # ========== DAEMON BUILD (Linux only for now) ==========
