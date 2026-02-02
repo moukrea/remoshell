@@ -5,7 +5,23 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Current protocol version.
+/// Protocol version for client-daemon communication.
+///
+/// This version is SEPARATE from the release version and should only be
+/// incremented when the wire protocol changes in a backward-incompatible way.
+///
+/// Increment when:
+/// - Adding new required message fields
+/// - Changing message serialization format
+/// - Removing or renaming message types
+/// - Changing the semantics of existing messages
+///
+/// Do NOT increment when:
+/// - Adding optional message fields with defaults
+/// - Fixing bugs that don't change the protocol
+/// - Making release version bumps
+///
+/// See docs/VERSIONING.md for complete versioning guidelines.
 pub const PROTOCOL_VERSION: u8 = 1;
 
 /// Envelope wrapper for all protocol messages.
