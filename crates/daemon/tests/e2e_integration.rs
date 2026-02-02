@@ -576,3 +576,421 @@ async fn test_session_manager_cleanup() {
 
     assert_eq!(manager.count(), 0);
 }
+
+// =============================================================================
+// Device Auth Integration Tests
+// =============================================================================
+
+/// Test that when `require_approval` is enabled, new devices are added to the
+/// pending queue instead of being immediately registered.
+#[tokio::test]
+async fn test_pending_approval_flow() {
+    use protocol::messages::{DeviceApprovalRequest, Message};
+
+    let temp_dir = TempDir::new().unwrap();
+    let session_manager = Arc::new(MockSessionManager::new());
+    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let file_transfer = Arc::new(
+        daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+            .with_temp_dir(temp_dir.path().join("tmp")),
+    );
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+
+    // Create trust store with require_approval enabled
+    let mut trust_store = TrustStore::new(temp_dir.path().join("trust.json"));
+    trust_store.set_require_approval(true);
+    let trust_store = Arc::new(trust_store);
+
+    let path_permissions = Arc::new(daemon::files::PathPermissions::new(
+        temp_dir.path().join("permissions.json"),
+        vec![temp_dir.path().to_path_buf()],
+    ));
+
+    let router = MessageRouter::new(
+        session_manager,
+        file_transfer,
+        directory_browser,
+        trust_store.clone(),
+        path_permissions,
+    );
+
+    // Generate a new device identity
+    let identity = protocol::DeviceIdentity::generate();
+    let device_id_str = identity.device_id().to_string();
+    let public_key_bytes = identity.public_key_bytes();
+
+    // Send approval request with matching authenticated key
+    let msg = Message::DeviceApprovalRequest(DeviceApprovalRequest {
+        device_id: device_id_str.clone(),
+        name: "New Device".to_string(),
+        public_key: public_key_bytes.to_vec(),
+        reason: Some("Testing pending approval".to_string()),
+    });
+
+    let result = router.route(msg, &test_device_id(), Some(&public_key_bytes)).await;
+    assert!(result.is_ok());
+
+    // Should be rejected with "pending approval" message
+    match result.unwrap() {
+        Some(Message::DeviceRejected(rejected)) => {
+            assert_eq!(rejected.device_id, device_id_str);
+            assert!(rejected.reason.contains("pending"));
+            assert!(rejected.retry_allowed);
+        }
+        _ => panic!("Expected DeviceRejected for new device with require_approval enabled"),
+    }
+
+    // Verify device is in pending queue
+    let pending = trust_store.list_pending().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].device_name, "New Device");
+
+    // Verify device is NOT in trusted devices yet
+    assert!(!trust_store.is_trusted(identity.device_id()).unwrap());
+}
+
+/// Test that approving a pending device transitions it to trusted status.
+#[tokio::test]
+async fn test_approval_to_trusted_transition() {
+    use protocol::messages::{DeviceApprovalRequest, Message, SessionCreate};
+
+    let temp_dir = TempDir::new().unwrap();
+    let session_manager = Arc::new(MockSessionManager::new());
+    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let file_transfer = Arc::new(
+        daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+            .with_temp_dir(temp_dir.path().join("tmp")),
+    );
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+
+    // Create trust store with require_approval enabled
+    let mut trust_store = TrustStore::new(temp_dir.path().join("trust.json"));
+    trust_store.set_require_approval(true);
+    let trust_store = Arc::new(trust_store);
+
+    let path_permissions = Arc::new(daemon::files::PathPermissions::new(
+        temp_dir.path().join("permissions.json"),
+        vec![temp_dir.path().to_path_buf()],
+    ));
+
+    // Set up permissions for the device we'll approve
+    let identity = protocol::DeviceIdentity::generate();
+    let device_id = *identity.device_id();
+    let device_perms = daemon::files::DevicePermissions::allow_all_dangerous(device_id);
+    path_permissions.set_device_permissions(device_perms).unwrap();
+
+    let router = MessageRouter::new(
+        session_manager,
+        file_transfer,
+        directory_browser,
+        trust_store.clone(),
+        path_permissions,
+    );
+
+    // Step 1: Send approval request (goes to pending)
+    let device_id_str = identity.device_id().to_string();
+    let public_key_bytes = identity.public_key_bytes();
+
+    let msg = Message::DeviceApprovalRequest(DeviceApprovalRequest {
+        device_id: device_id_str.clone(),
+        name: "Pending Device".to_string(),
+        public_key: public_key_bytes.to_vec(),
+        reason: Some("Testing".to_string()),
+    });
+
+    let result = router.route(msg, &device_id, Some(&public_key_bytes)).await;
+    assert!(result.is_ok());
+
+    // Verify device is pending
+    assert!(trust_store.is_pending(&device_id).unwrap());
+    assert!(!trust_store.is_trusted(&device_id).unwrap());
+
+    // Step 2: Try to create session - should fail (pending)
+    let msg = Message::SessionCreate(SessionCreate {
+        cols: 80,
+        rows: 24,
+        shell: None,
+        env: vec![],
+        cwd: None,
+    });
+
+    let result = router.route(msg, &device_id, None).await;
+    assert!(result.is_err());
+
+    // Step 3: Approve the device
+    trust_store.approve_pending(&device_id).unwrap();
+
+    // Verify device is now trusted
+    assert!(!trust_store.is_pending(&device_id).unwrap());
+    assert!(trust_store.is_trusted(&device_id).unwrap());
+
+    // Step 4: Try to create session again - should succeed now
+    let msg = Message::SessionCreate(SessionCreate {
+        cols: 80,
+        rows: 24,
+        shell: None,
+        env: vec![],
+        cwd: None,
+    });
+
+    let result = router.route(msg, &device_id, None).await;
+    assert!(result.is_ok());
+
+    match result.unwrap() {
+        Some(Message::SessionCreated(created)) => {
+            assert!(!created.session_id.is_empty());
+        }
+        _ => panic!("Expected SessionCreated after approval"),
+    }
+}
+
+/// Test that session access requires a trusted device.
+#[tokio::test]
+async fn test_session_access_requires_trust() {
+    use daemon::devices::TrustLevel;
+    use protocol::messages::{Message, SessionCreate};
+
+    let temp_dir = TempDir::new().unwrap();
+    let session_manager = Arc::new(MockSessionManager::new());
+    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let file_transfer = Arc::new(
+        daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+            .with_temp_dir(temp_dir.path().join("tmp")),
+    );
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+    let path_permissions = Arc::new(daemon::files::PathPermissions::new(
+        temp_dir.path().join("permissions.json"),
+        vec![temp_dir.path().to_path_buf()],
+    ));
+
+    let router = MessageRouter::new(
+        session_manager,
+        file_transfer,
+        directory_browser,
+        trust_store.clone(),
+        path_permissions.clone(),
+    );
+
+    // Generate a device identity
+    let identity = protocol::DeviceIdentity::generate();
+    let device_id = *identity.device_id();
+
+    // Register device with Unknown trust level (not trusted yet)
+    let device = daemon::devices::TrustedDevice::new_unknown(
+        device_id,
+        "Untrusted Device".to_string(),
+        identity.public_key_bytes(),
+    );
+    trust_store.add_device(device).unwrap();
+
+    // Set up permissions
+    let device_perms = daemon::files::DevicePermissions::allow_all_dangerous(device_id);
+    path_permissions.set_device_permissions(device_perms).unwrap();
+
+    // Attempt session create - should fail (Unknown != Trusted)
+    let msg = Message::SessionCreate(SessionCreate {
+        cols: 80,
+        rows: 24,
+        shell: None,
+        env: vec![],
+        cwd: None,
+    });
+
+    let result = router.route(msg, &device_id, None).await;
+    assert!(result.is_err());
+    match result {
+        Err(daemon::router::RouterError::Device(msg)) => {
+            assert!(msg.contains("pending"), "Expected 'pending' error, got: {}", msg);
+        }
+        _ => panic!("Expected RouterError::Device"),
+    }
+
+    // Trust the device
+    trust_store.set_trust_level(&device_id, TrustLevel::Trusted).unwrap();
+
+    // Now session create should work
+    let msg = Message::SessionCreate(SessionCreate {
+        cols: 80,
+        rows: 24,
+        shell: None,
+        env: vec![],
+        cwd: None,
+    });
+
+    let result = router.route(msg, &device_id, None).await;
+    assert!(result.is_ok());
+}
+
+/// Test that file permissions are enforced correctly.
+#[tokio::test]
+async fn test_file_permission_enforcement() {
+    use protocol::messages::{FileListRequest, Message};
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create test directories
+    let allowed_dir = temp_dir.path().join("allowed");
+    let forbidden_dir = temp_dir.path().join("forbidden");
+    std::fs::create_dir_all(&allowed_dir).unwrap();
+    std::fs::create_dir_all(&forbidden_dir).unwrap();
+    std::fs::write(allowed_dir.join("test.txt"), "allowed content").unwrap();
+    std::fs::write(forbidden_dir.join("secret.txt"), "forbidden content").unwrap();
+
+    let session_manager = Arc::new(MockSessionManager::new());
+    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let file_transfer = Arc::new(
+        daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+            .with_temp_dir(temp_dir.path().join("tmp")),
+    );
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+    let path_permissions = Arc::new(daemon::files::PathPermissions::new(
+        temp_dir.path().join("permissions.json"),
+        vec![temp_dir.path().to_path_buf()], // Global allowed path
+    ));
+
+    // Create a trusted device with limited permissions
+    let identity = protocol::DeviceIdentity::generate();
+    let device_id = *identity.device_id();
+    let device = daemon::devices::TrustedDevice::new(
+        device_id,
+        "Limited Device".to_string(),
+        identity.public_key_bytes(),
+    );
+    trust_store.add_device(device).unwrap();
+
+    // Only allow access to "allowed" directory
+    let mut device_perms = daemon::files::DevicePermissions::new(device_id);
+    device_perms.add_path(daemon::files::permissions::PathPermission::read_write(allowed_dir.clone()));
+    path_permissions.set_device_permissions(device_perms).unwrap();
+
+    let router = MessageRouter::new(
+        session_manager,
+        file_transfer,
+        directory_browser,
+        trust_store,
+        path_permissions,
+    );
+
+    // Access within allowed path - should work
+    let msg = Message::FileListRequest(FileListRequest {
+        path: allowed_dir.to_string_lossy().to_string(),
+        include_hidden: false,
+    });
+
+    let result = router.route(msg, &device_id, None).await;
+    assert!(result.is_ok());
+    match result.unwrap() {
+        Some(Message::FileListResponse(response)) => {
+            assert_eq!(response.entries.len(), 1); // test.txt
+        }
+        _ => panic!("Expected FileListResponse"),
+    }
+
+    // Access outside allowed path - should fail
+    let msg = Message::FileListRequest(FileListRequest {
+        path: forbidden_dir.to_string_lossy().to_string(),
+        include_hidden: false,
+    });
+
+    let result = router.route(msg, &device_id, None).await;
+    assert!(result.is_err());
+    assert!(matches!(result, Err(daemon::router::RouterError::Permission(_))));
+}
+
+/// Test that pending approval requests expire after timeout.
+#[tokio::test]
+async fn test_approval_timeout() {
+    use std::time::Duration;
+
+    let temp_dir = TempDir::new().unwrap();
+    let mut trust_store = TrustStore::new(temp_dir.path().join("trust.json"));
+    trust_store.set_require_approval(true);
+
+    // Add a pending approval
+    let identity = protocol::DeviceIdentity::generate();
+    let device_id = *identity.device_id();
+    let approval = daemon::devices::PendingApproval::new(
+        device_id,
+        "Timeout Test Device".to_string(),
+        identity.public_key_bytes(),
+        None,
+    );
+    trust_store.add_pending(approval).unwrap();
+
+    // Verify pending
+    assert_eq!(trust_store.pending_count().unwrap(), 1);
+    assert!(trust_store.is_pending(&device_id).unwrap());
+
+    // With a long timeout, nothing should expire
+    let expired = trust_store.cleanup_expired_approvals(3600).unwrap();
+    assert!(expired.is_empty());
+    assert_eq!(trust_store.pending_count().unwrap(), 1);
+
+    // Wait for approval to age (just over 1 second)
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    // With 1 second timeout, it should now expire
+    let expired = trust_store.cleanup_expired_approvals(1).unwrap();
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0], device_id);
+
+    // Should be removed from pending
+    assert_eq!(trust_store.pending_count().unwrap(), 0);
+    assert!(!trust_store.is_pending(&device_id).unwrap());
+}
+
+/// Test that public key mismatch is rejected during device approval.
+#[tokio::test]
+async fn test_public_key_mismatch_rejection() {
+    use protocol::messages::{DeviceApprovalRequest, Message};
+
+    let temp_dir = TempDir::new().unwrap();
+    let session_manager = Arc::new(MockSessionManager::new());
+    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let file_transfer = Arc::new(
+        daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
+            .with_temp_dir(temp_dir.path().join("tmp")),
+    );
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
+    let path_permissions = Arc::new(daemon::files::PathPermissions::new(
+        temp_dir.path().join("permissions.json"),
+        vec![temp_dir.path().to_path_buf()],
+    ));
+
+    let router = MessageRouter::new(
+        session_manager,
+        file_transfer,
+        directory_browser,
+        trust_store,
+        path_permissions,
+    );
+
+    // Generate a device identity
+    let identity = protocol::DeviceIdentity::generate();
+    let device_id_str = identity.device_id().to_string();
+
+    // Create a request with the device's public key
+    let claimed_public_key = identity.public_key_bytes();
+    let msg = Message::DeviceApprovalRequest(DeviceApprovalRequest {
+        device_id: device_id_str.clone(),
+        name: "Spoofed Device".to_string(),
+        public_key: claimed_public_key.to_vec(),
+        reason: Some("Testing spoofing".to_string()),
+    });
+
+    // Provide a DIFFERENT authenticated public key (simulating spoofing attempt)
+    let different_key: [u8; 32] = [0xDE; 32];
+
+    let result = router.route(msg, &test_device_id(), Some(&different_key)).await;
+    assert!(result.is_err());
+
+    match result {
+        Err(daemon::router::RouterError::Auth(msg)) => {
+            assert!(msg.contains("mismatch"), "Expected 'mismatch' error, got: {}", msg);
+        }
+        _ => panic!("Expected RouterError::Auth for public key mismatch"),
+    }
+}
