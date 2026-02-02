@@ -285,6 +285,17 @@ const DevicesView: Component = () => {
   const [pairingError, setPairingError] = createSignal<string | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = createSignal<string | null>(null);
   const [scannerKey, setScannerKey] = createSignal(0);
+  const [customDeviceName, setCustomDeviceName] = createSignal('');
+
+  // Helper to get device name (custom or auto-generated)
+  const getDeviceName = (deviceId: string): string => {
+    const custom = customDeviceName().trim();
+    if (custom.length > 0) {
+      return custom.substring(0, 32); // Enforce max length
+    }
+    // Fallback to auto-generated name
+    return `Device ${deviceId.substring(0, 8)}`;
+  };
 
   const handleConnect = (deviceId: string) => {
     // Start connection process
@@ -324,10 +335,11 @@ const DevicesView: Component = () => {
         console.log('[Pairing] Using relay URL:', pairingData.relay_url);
       }
 
-      // Add device to store
+      // Add device to store with custom or auto-generated name
+      const deviceName = getDeviceName(pairingData.device_id);
       deviceStore.addDevice({
         id: pairingData.device_id,
-        name: `Device ${pairingData.device_id.substring(0, 8)}`,
+        name: deviceName,
         platform: 'unknown',
       });
 
@@ -335,8 +347,10 @@ const DevicesView: Component = () => {
       const orchestrator = getOrchestrator();
       await orchestrator.connect(pairingData.device_id);
 
+      // Reset custom name and hide pairing section
+      setCustomDeviceName('');
       setShowPairing(false);
-      console.log('[Pairing] Successfully initiated connection to device:', pairingData.device_id);
+      console.log('[Pairing] Successfully initiated connection to device:', pairingData.device_id, 'as', deviceName);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error during pairing';
       setPairingError(errorMessage);
@@ -365,6 +379,23 @@ const DevicesView: Component = () => {
       <Show when={showPairing()}>
         <div class="devices-pairing" data-testid="pairing-section">
           <h3>Pair a Device</h3>
+
+          {/* Device name input */}
+          <div class="device-name-input">
+            <label for="device-name">Device Name (optional)</label>
+            <input
+              id="device-name"
+              data-testid="device-name-input"
+              type="text"
+              placeholder="e.g., Work Laptop"
+              maxLength={32}
+              value={customDeviceName()}
+              onInput={(e) => setCustomDeviceName(e.currentTarget.value)}
+            />
+            <Show when={customDeviceName().length > 0}>
+              <span class="device-name-input__count">{customDeviceName().length}/32</span>
+            </Show>
+          </div>
 
           {/* QR Scanner - keyed by scannerKey to force re-mount on rescan */}
           <div class="pairing-scanner" data-scanner-key={scannerKey()}>
