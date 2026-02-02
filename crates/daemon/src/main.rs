@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use daemon::config::Config;
+use daemon::config::{Config, DEFAULT_SIGNALING_URL};
 use daemon::ipc::{get_daemon_pid, get_socket_path, is_daemon_running, IpcClient, IpcResponse};
 use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
 use daemon::ui::qr::{generate_png_qr, generate_terminal_qr, PairingInfo};
@@ -75,7 +75,7 @@ pub enum Commands {
         output: Option<PathBuf>,
 
         /// Relay/signaling server URL
-        #[arg(long, default_value = "wss://remoshell-signaling.moukrea.workers.dev")]
+        #[arg(long, default_value = DEFAULT_SIGNALING_URL)]
         relay_url: String,
 
         /// Expiry time in seconds (default: 300 = 5 minutes)
@@ -1181,7 +1181,7 @@ mod tests {
             } => {
                 assert_eq!(format, PairFormat::Terminal);
                 assert!(output.is_none());
-                assert_eq!(relay_url, "wss://remoshell-signaling.moukrea.workers.dev");
+                assert_eq!(relay_url, DEFAULT_SIGNALING_URL);
                 assert_eq!(expiry, 300);
             }
             _ => panic!("Expected Pair command"),

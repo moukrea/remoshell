@@ -35,6 +35,9 @@ pub enum ConfigError {
 /// Valid log level values for tracing configuration.
 const VALID_LOG_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error"];
 
+/// Default signaling server URL.
+pub const DEFAULT_SIGNALING_URL: &str = "wss://remoshell-signaling.moukrea.workers.dev";
+
 /// Main configuration structure for the RemoShell daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
@@ -122,7 +125,7 @@ impl Default for DaemonConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            signaling_url: "wss://remoshell-signaling.moukrea.workers.dev".to_string(),
+            signaling_url: DEFAULT_SIGNALING_URL.to_string(),
             stun_servers: vec![
                 "stun:stun.l.google.com:19302".to_string(),
                 "stun:stun1.l.google.com:19302".to_string(),
@@ -353,10 +356,7 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(config.daemon.log_level, "info");
-        assert_eq!(
-            config.network.signaling_url,
-            "wss://remoshell-signaling.moukrea.workers.dev"
-        );
+        assert_eq!(config.network.signaling_url, DEFAULT_SIGNALING_URL);
         assert_eq!(config.network.stun_servers.len(), 2);
         assert_eq!(config.session.max_sessions, 10);
         assert_eq!(config.file.max_size, 100 * 1024 * 1024);
@@ -420,10 +420,7 @@ max_sessions = 5
         assert_eq!(config.daemon.log_level, "debug");
         assert_eq!(config.session.max_sessions, 5);
         // Other values should be defaults
-        assert_eq!(
-            config.network.signaling_url,
-            "wss://remoshell-signaling.moukrea.workers.dev"
-        );
+        assert_eq!(config.network.signaling_url, DEFAULT_SIGNALING_URL);
     }
 
     #[test]

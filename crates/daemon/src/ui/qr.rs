@@ -754,11 +754,13 @@ mod tests {
 
     #[test]
     fn test_qr_code_size_reasonable() {
+        use crate::config::DEFAULT_SIGNALING_URL;
+
         // Test that the QR code can handle the typical content size
         let identity = protocol::DeviceIdentity::generate();
         let info = PairingInfo::from_identity(
             &identity,
-            "wss://remoshell-signaling.moukrea.workers.dev".to_string(),
+            DEFAULT_SIGNALING_URL.to_string(),
             Some(300),
         );
 

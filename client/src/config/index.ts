@@ -10,8 +10,11 @@ export interface AppConfig {
   iceServers: RTCIceServer[];
 }
 
+/** Default signaling server URL */
+export const DEFAULT_SIGNALING_URL = 'wss://remoshell-signaling.moukrea.workers.dev';
+
 const DEFAULT_CONFIG: AppConfig = {
-  signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'wss://remoshell-signaling.moukrea.workers.dev',
+  signalingUrl: import.meta.env.VITE_SIGNALING_URL || DEFAULT_SIGNALING_URL,
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },

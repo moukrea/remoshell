@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getConfig, setSignalingUrl, resetConfig, type AppConfig } from './index';
+import { getConfig, setSignalingUrl, resetConfig, DEFAULT_SIGNALING_URL, type AppConfig } from './index';
 
 describe('Config Module', () => {
   beforeEach(() => {
@@ -18,7 +18,7 @@ describe('Config Module', () => {
     it('should have default signaling URL', () => {
       const config = getConfig();
 
-      expect(config.signalingUrl).toBe('wss://remoshell-signaling.moukrea.workers.dev');
+      expect(config.signalingUrl).toBe(DEFAULT_SIGNALING_URL);
     });
 
     it('should have Google STUN servers as default ICE servers', () => {
@@ -72,7 +72,7 @@ describe('Config Module', () => {
 
       resetConfig();
 
-      expect(getConfig().signalingUrl).toBe('wss://remoshell-signaling.moukrea.workers.dev');
+      expect(getConfig().signalingUrl).toBe(DEFAULT_SIGNALING_URL);
     });
 
     it('should restore default ICE servers', () => {
