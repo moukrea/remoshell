@@ -1,6 +1,9 @@
 # Frontend Production Dockerfile
 # Multi-stage build: Node.js for building, nginx for serving
 
+# Build argument for version
+ARG VERSION=dev
+
 # Stage 1: Build the frontend
 FROM node:20-alpine AS builder
 
@@ -24,6 +27,15 @@ RUN npm run build
 
 # Stage 2: Serve with nginx
 FROM nginx:alpine AS runtime
+
+# Re-declare VERSION arg for this stage
+ARG VERSION=dev
+
+# OCI Labels for image metadata
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.source="https://github.com/moukrea/remoshell"
+LABEL org.opencontainers.image.title="remoshell-frontend"
+LABEL org.opencontainers.image.description="RemoteShell web frontend for browser-based terminal access"
 
 # Copy custom nginx configuration
 COPY <<EOF /etc/nginx/conf.d/default.conf

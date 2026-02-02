@@ -1,3 +1,6 @@
+# Build argument for version
+ARG VERSION=dev
+
 # Stage 1: Builder
 FROM rust:1.75 AS builder
 
@@ -19,6 +22,15 @@ RUN cargo build --release --package daemon --bin remoshell-daemon
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim AS runtime
+
+# Re-declare VERSION arg for this stage
+ARG VERSION=dev
+
+# OCI Labels for image metadata
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.source="https://github.com/moukrea/remoshell"
+LABEL org.opencontainers.image.title="remoshell-daemon"
+LABEL org.opencontainers.image.description="RemoteShell daemon service for secure remote terminal access"
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \

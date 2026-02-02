@@ -48,6 +48,9 @@ services:
     build:
       context: .
       dockerfile: docker/daemon/Dockerfile.prod
+      args:
+        VERSION: ${VERSION:-dev}
+    image: remoshell-daemon:${VERSION:-latest}
     ports:
       - "8080:8080"
     volumes:
@@ -86,7 +89,9 @@ services:
       context: ./client
       dockerfile: ../docker/frontend/Dockerfile.prod
       args:
-        - VITE_SIGNALING_URL=${VITE_SIGNALING_URL:-wss://remoshell-signaling.moukrea.workers.dev}
+        VERSION: ${VERSION:-dev}
+        VITE_SIGNALING_URL: ${VITE_SIGNALING_URL:-wss://remoshell-signaling.moukrea.workers.dev}
+    image: remoshell-frontend:${VERSION:-latest}
     ports:
       - "80:80"
     environment:
