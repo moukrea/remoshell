@@ -85,9 +85,9 @@ pub struct DaemonOrchestrator {
     /// Trust store for device management.
     trust_store: Arc<TrustStore>,
     /// Directory browser for file listing.
-    _directory_browser: Arc<DirectoryBrowser>,
+    directory_browser: Arc<DirectoryBrowser>,
     /// File transfer handler.
-    _file_transfer: Arc<FileTransfer>,
+    file_transfer: Arc<FileTransfer>,
     /// Message router.
     router: Arc<MessageRouter<SessionManagerImpl>>,
     /// Signaling client.
@@ -162,8 +162,8 @@ impl DaemonOrchestrator {
             state: Arc::new(RwLock::new(OrchestratorState::Stopped)),
             session_manager,
             trust_store,
-            _directory_browser: directory_browser,
-            _file_transfer: file_transfer,
+            directory_browser,
+            file_transfer,
             router,
             signaling_client: None,
             connections: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -849,6 +849,16 @@ impl DaemonOrchestrator {
     /// Returns the shutdown token for external tasks to observe shutdown.
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown_token.clone()
+    }
+
+    /// Returns the directory browser for file listing operations.
+    pub fn directory_browser(&self) -> &Arc<DirectoryBrowser> {
+        &self.directory_browser
+    }
+
+    /// Returns the file transfer handler for upload/download operations.
+    pub fn file_transfer(&self) -> &Arc<FileTransfer> {
+        &self.file_transfer
     }
 }
 
