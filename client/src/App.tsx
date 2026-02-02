@@ -52,6 +52,7 @@ const TerminalView: Component = () => {
   const sessionStore = getSessionStore();
   const connectionStore = getConnectionStore();
   const [terminalHandle, setTerminalHandle] = createSignal<XTermWrapperHandle | undefined>();
+  const [sessionLoading, setSessionLoading] = createSignal(false);
 
   // Get active session
   const activeSession = () => sessionStore.getActiveSession();
@@ -75,14 +76,19 @@ const TerminalView: Component = () => {
   });
 
   // Create a new session when connected
-  const handleNewSession = () => {
+  const handleNewSession = async () => {
     const activePeer = connectionStore.getActivePeer();
     if (activePeer && activePeer.status === 'connected') {
-      const sessionId = sessionStore.createSession({
-        peerId: activePeer.id,
-        title: 'Terminal',
-      });
-      sessionStore.setSessionStatus(sessionId, 'connected');
+      setSessionLoading(true);
+      try {
+        const sessionId = sessionStore.createSession({
+          peerId: activePeer.id,
+          title: 'Terminal',
+        });
+        sessionStore.setSessionStatus(sessionId, 'connected');
+      } finally {
+        setSessionLoading(false);
+      }
     }
   };
 
@@ -131,11 +137,19 @@ const TerminalView: Component = () => {
         <button
           class="terminal-tab terminal-tab--new"
           onClick={handleNewSession}
-          disabled={connectionStore.state.signalingStatus !== 'connected'}
+          disabled={connectionStore.state.signalingStatus !== 'connected' || sessionLoading()}
         >
           +
         </button>
       </div>
+
+      {/* Session loading indicator */}
+      <Show when={sessionLoading()}>
+        <div class="session-loading" data-testid="session-loading">
+          <div class="session-loading__spinner" />
+          <span class="session-loading__text">Initializing session...</span>
+        </div>
+      </Show>
 
       {/* Terminal content */}
       <Show
