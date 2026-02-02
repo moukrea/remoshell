@@ -16,6 +16,10 @@ export interface HeaderProps {
   onMobileMenuToggle?: () => void;
   /** Whether mobile menu is open (for aria-expanded) */
   mobileMenuOpen?: boolean;
+  /** Connection error message to display */
+  connectionError?: string | null;
+  /** Called when retry button is clicked */
+  onConnectionRetry?: () => void;
   /** Additional CSS class */
   class?: string;
 }
@@ -58,6 +62,27 @@ const Header: Component<HeaderProps> = (props) => {
       data-testid="header"
       role="banner"
     >
+      {/* Connection error banner */}
+      <Show when={props.connectionError}>
+        <div
+          class="connection-error-banner"
+          data-testid="connection-error"
+          role="alert"
+          aria-live="assertive"
+        >
+          <span class="connection-error-banner__icon" aria-hidden="true">!</span>
+          <span class="connection-error-banner__message">{props.connectionError}</span>
+          <button
+            class="connection-error-banner__retry"
+            data-testid="connection-retry"
+            onClick={() => props.onConnectionRetry?.()}
+            aria-label="Retry connection"
+          >
+            Retry
+          </button>
+        </div>
+      </Show>
+
       {/* Mobile menu button */}
       <button
         class="header__mobile-menu-btn"

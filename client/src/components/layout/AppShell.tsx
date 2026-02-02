@@ -21,6 +21,10 @@ export interface AppShellProps {
   isDarkTheme?: boolean;
   /** Connection status for the header */
   connectionStatus?: 'connected' | 'connecting' | 'disconnected';
+  /** Connection error message to display */
+  connectionError?: string | null;
+  /** Called when retry button is clicked */
+  onConnectionRetry?: () => void;
   /** Additional CSS class */
   class?: string;
 }
@@ -123,6 +127,8 @@ const AppShell: Component<AppShellProps> = (props) => {
           onThemeToggle={handleThemeToggle}
           onMobileMenuToggle={handleMobileMenuToggle}
           mobileMenuOpen={mobileMenuOpen()}
+          connectionError={props.connectionError}
+          onConnectionRetry={props.onConnectionRetry}
           class="app-shell__header"
         />
 

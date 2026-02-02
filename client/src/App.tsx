@@ -473,6 +473,7 @@ const App: Component = () => {
   const fileStore = getFileStore();
 
   const [activeView, setActiveView] = createSignal<AppView>('terminal');
+  const [connectionError, setConnectionError] = createSignal<string | null>(null);
 
   // Load theme from localStorage, default to dark if not set
   const savedTheme = localStorage.getItem('remoshell-theme');
@@ -512,6 +513,17 @@ const App: Component = () => {
     // Connection store events
     const unsubConnection = connectionStore.subscribe((event: ConnectionEvent) => {
       console.log('[Connection]', event.type, event);
+
+      // Handle signaling connection state changes
+      if (event.type === 'signaling:connected') {
+        // Clear error when connection succeeds
+        setConnectionError(null);
+      } else if (event.type === 'signaling:error' || event.type === 'signaling:disconnected') {
+        // Set error when signaling fails
+        if (event.error) {
+          setConnectionError(event.error);
+        }
+      }
 
       // Handle peer connection changes
       if (event.type === 'peer:connected' && event.peerId) {
@@ -557,6 +569,21 @@ const App: Component = () => {
   // Get connection status from store
   const connectionStatus = () => mapConnectionStatus(connectionStore.state.signalingStatus);
 
+  // Handle connection retry - clear error and attempt reconnection
+  const handleConnectionRetry = () => {
+    setConnectionError(null);
+    // Attempt to reconnect using the orchestrator if we have a previous room
+    const orchestrator = getOrchestrator();
+    if (orchestrator.isInitialized()) {
+      // The signaling client will automatically retry based on stored roomId
+      // For now we can trigger a disconnect/reconnect cycle
+      orchestrator.disconnect();
+      // Note: User needs to re-pair or select a device to reconnect
+      // This clears the error state so they can try again
+      console.log('[App] Connection retry requested - user can reconnect via Devices view');
+    }
+  };
+
   return (
     <>
       <OfflineIndicator />
@@ -567,6 +594,8 @@ const App: Component = () => {
         isDarkTheme={isDarkTheme()}
         onThemeChange={handleThemeChange}
         connectionStatus={connectionStatus()}
+        connectionError={connectionError()}
+        onConnectionRetry={handleConnectionRetry}
       >
         {/* Route to appropriate view */}
         <Show when={activeView() === 'terminal'}>

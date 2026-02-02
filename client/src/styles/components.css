@@ -106,6 +106,68 @@ html, body, #root {
   50% { opacity: 0.5; }
 }
 
+/* Connection Error Banner */
+.connection-error-banner {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: rgba(239, 68, 68, 0.15);
+  border-bottom: 1px solid #ef4444;
+  color: #ef4444;
+  font-size: 0.875rem;
+  z-index: 100;
+}
+
+.connection-error-banner__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: #ef4444;
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.connection-error-banner__message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-error-banner__retry {
+  padding: 0.25rem 0.75rem;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  flex-shrink: 0;
+}
+
+.connection-error-banner__retry:hover {
+  background: #dc2626;
+}
+
+.connection-error-banner__retry:focus-visible {
+  outline: 2px solid #ef4444;
+  outline-offset: 2px;
+}
+
 .header__mobile-menu-btn {
   display: none;
   min-width: 44px;
