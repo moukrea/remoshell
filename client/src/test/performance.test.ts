@@ -430,14 +430,70 @@ describe('Bundle Size Targets', () => {
 });
 
 describe('Latency Targets', () => {
-  it('should document pairing time target of < 3 seconds', () => {
-    const TARGET_PAIRING_MS = 3000;
-    expect(TARGET_PAIRING_MS).toBe(3000);
+  beforeEach(() => {
+    clearMetrics();
+    setProfilingEnabled(true);
   });
 
-  it('should document input-output latency target of < 50ms', () => {
-    const TARGET_LATENCY_MS = 50;
-    expect(TARGET_LATENCY_MS).toBe(50);
+  afterEach(() => {
+    setProfilingEnabled(false);
+  });
+
+  it('should measure p95 input-output latency under 50ms', () => {
+    // Simulate realistic latency samples
+    const samples = [
+      10, 12, 15, 18, 20, 22, 25, 28, 30, 32,
+      35, 38, 40, 42, 45, 48, 25, 30, 35, 40
+    ];
+
+    for (const sample of samples) {
+      recordSample(MetricNames.WEBRTC_LATENCY, sample);
+    }
+
+    const stats = getStats(MetricNames.WEBRTC_LATENCY);
+    expect(stats).toBeDefined();
+    expect(stats!.p95).toBeLessThan(50);
+    expect(stats!.count).toBe(samples.length);
+  });
+
+  it('should track actual timing with startTiming/endTiming', async () => {
+    vi.useRealTimers();
+
+    const id = 'test-timing';
+    startTiming(MetricNames.WEBRTC_LATENCY, id);
+
+    // Simulate async operation
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const duration = endTiming(MetricNames.WEBRTC_LATENCY, id);
+    expect(duration).toBeGreaterThanOrEqual(10);
+    expect(duration).toBeLessThan(100); // Should complete quickly
+  });
+
+  it('should measure pairing flow duration', () => {
+    const samples = [1500, 2000, 2500, 1800, 2200];
+
+    for (const sample of samples) {
+      recordSample(MetricNames.PAIRING_TOTAL, sample);
+    }
+
+    const stats = getStats(MetricNames.PAIRING_TOTAL);
+    expect(stats).toBeDefined();
+    expect(stats!.p95).toBeLessThan(3000); // Target: < 3 seconds
+  });
+
+  it('should calculate accurate percentiles', () => {
+    // Add 100 samples from 1 to 100
+    for (let i = 1; i <= 100; i++) {
+      recordSample(MetricNames.WEBRTC_LATENCY, i);
+    }
+
+    const stats = getStats(MetricNames.WEBRTC_LATENCY);
+    expect(stats).toBeDefined();
+    expect(stats!.p50).toBeCloseTo(50, 0); // Median
+    expect(stats!.p95).toBeCloseTo(95, 0); // 95th percentile
+    expect(stats!.min).toBe(1);
+    expect(stats!.max).toBe(100);
   });
 });
 
