@@ -7,7 +7,7 @@
 //! - ICE candidate relay
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::DEFAULT_SIGNALING_URL;
 
@@ -182,6 +182,10 @@ pub struct SignalingConfig {
     pub backoff_multiplier: f64,
     /// Whether to automatically reconnect on disconnect.
     pub auto_reconnect: bool,
+    /// Interval between heartbeat pings.
+    pub heartbeat_interval: Duration,
+    /// Timeout for heartbeat pong response.
+    pub heartbeat_timeout: Duration,
 }
 
 impl Default for SignalingConfig {
@@ -192,6 +196,8 @@ impl Default for SignalingConfig {
             max_backoff: Duration::from_millis(MAX_BACKOFF_MS),
             backoff_multiplier: BACKOFF_MULTIPLIER,
             auto_reconnect: true,
+            heartbeat_interval: Duration::from_secs(30),
+            heartbeat_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -429,7 +435,7 @@ impl WebSocketSignalingClient {
             self.set_state(ConnectionState::Connecting).await;
 
             match self.connect_internal().await {
-                Ok((message_tx, mut ws_rx)) => {
+                Ok((message_tx, mut ws_rx, control_tx, last_pong)) => {
                     // Connection successful
                     {
                         let mut state = self.state.write().await;
@@ -453,9 +459,30 @@ impl WebSocketSignalingClient {
                         }
                     }
 
-                    // Process incoming messages
+                    // Set up heartbeat interval timer
+                    let mut heartbeat_interval =
+                        tokio::time::interval(self.config.heartbeat_interval);
+                    // Skip the first immediate tick
+                    heartbeat_interval.tick().await;
+
+                    // Process incoming messages with heartbeat
                     loop {
                         tokio::select! {
+                            _ = heartbeat_interval.tick() => {
+                                // Check if we've received a pong recently
+                                let last_pong_time = *last_pong.read().await;
+                                if last_pong_time.elapsed() > self.config.heartbeat_timeout + self.config.heartbeat_interval {
+                                    tracing::warn!("Heartbeat timeout, reconnecting...");
+                                    break;
+                                }
+
+                                // Send ping
+                                if let Err(e) = control_tx.send(WsMessage::Ping(vec![])).await {
+                                    tracing::error!("Failed to send ping: {}", e);
+                                    break;
+                                }
+                                tracing::debug!("Sent heartbeat ping");
+                            }
                             Some(result) = ws_rx.recv() => {
                                 match result {
                                     Ok(msg) => self.handle_message(msg).await,
@@ -511,11 +538,19 @@ impl WebSocketSignalingClient {
     }
 
     /// Internal connection establishment.
+    ///
+    /// Returns:
+    /// - Sender for signaling messages
+    /// - Receiver for incoming signaling messages
+    /// - Sender for WebSocket control frames (ping)
+    /// - Shared timestamp of last pong received
     async fn connect_internal(
         &self,
     ) -> Result<(
         mpsc::Sender<SignalingMessage>,
         mpsc::Receiver<Result<SignalingMessage>>,
+        mpsc::Sender<WsMessage>,
+        Arc<RwLock<Instant>>,
     )> {
         // Validate the URL format
         let _url = Url::parse(&self.config.server_url)
@@ -534,20 +569,37 @@ impl WebSocketSignalingClient {
         // Create channels for message passing
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<SignalingMessage>(256);
         let (incoming_tx, incoming_rx) = mpsc::channel::<Result<SignalingMessage>>(256);
+        // Channel for raw WebSocket control frames (ping)
+        let (control_tx, mut control_rx) = mpsc::channel::<WsMessage>(16);
 
-        // Spawn task to handle outgoing messages
+        // Shared timestamp for last pong received (initialized to now for grace period)
+        let last_pong = Arc::new(RwLock::new(Instant::now()));
+        let last_pong_writer = last_pong.clone();
+
+        // Spawn task to handle outgoing messages and control frames
         tokio::spawn(async move {
-            while let Some(msg) = outgoing_rx.recv().await {
-                match serde_json::to_string(&msg) {
-                    Ok(json) => {
-                        if let Err(e) = ws_sink.send(WsMessage::Text(json)).await {
-                            tracing::error!("failed to send WebSocket message: {}", e);
+            loop {
+                tokio::select! {
+                    Some(msg) = outgoing_rx.recv() => {
+                        match serde_json::to_string(&msg) {
+                            Ok(json) => {
+                                if let Err(e) = ws_sink.send(WsMessage::Text(json)).await {
+                                    tracing::error!("failed to send WebSocket message: {}", e);
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("failed to serialize message: {}", e);
+                            }
+                        }
+                    }
+                    Some(control_msg) = control_rx.recv() => {
+                        if let Err(e) = ws_sink.send(control_msg).await {
+                            tracing::error!("failed to send WebSocket control frame: {}", e);
                             break;
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("failed to serialize message: {}", e);
-                    }
+                    else => break,
                 }
             }
         });
@@ -568,6 +620,11 @@ impl WebSocketSignalingClient {
                             }
                         }
                     }
+                    Ok(WsMessage::Pong(_)) => {
+                        // Update last pong timestamp for heartbeat tracking
+                        *last_pong_writer.write().await = Instant::now();
+                        tracing::debug!("Received heartbeat pong");
+                    }
                     Ok(WsMessage::Close(_)) => {
                         let _ = incoming_tx
                             .send(Err(ProtocolError::ConnectionClosed(
@@ -586,13 +643,13 @@ impl WebSocketSignalingClient {
                         break;
                     }
                     _ => {
-                        // Ignore ping/pong/binary messages
+                        // Ignore ping/binary messages
                     }
                 }
             }
         });
 
-        Ok((outgoing_tx, incoming_rx))
+        Ok((outgoing_tx, incoming_rx, control_tx, last_pong))
     }
 
     /// Starts the connection in the background.
