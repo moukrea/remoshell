@@ -74,6 +74,90 @@ const getFileIcon = (entry: FileEntry): string => {
   return iconMap[ext] ?? 'F';
 };
 
+/**
+ * Default validation constants
+ */
+const DEFAULT_MAX_SIZE = 100 * 1024 * 1024; // 100MB
+const DEFAULT_MAX_COUNT = 100;
+const DEFAULT_BLOCKED_EXTENSIONS = ['.exe', '.dll', '.so', '.dylib'];
+
+/**
+ * Validate files for upload
+ */
+const validateFiles = (
+  files: File[],
+  options: {
+    maxFileSize: number;
+    maxFileCount: number;
+    allowedExtensions: string[];
+    blockedExtensions: string[];
+  }
+): { valid: File[]; errors: ValidationError[] } => {
+  const valid: File[] = [];
+  const errors: ValidationError[] = [];
+
+  // Check total count
+  if (files.length > options.maxFileCount) {
+    errors.push({
+      fileName: '',
+      reason: 'count',
+      message: `Too many files. Maximum ${options.maxFileCount} files allowed, got ${files.length}.`,
+    });
+    // Still validate individual files
+  }
+
+  for (const file of files) {
+    const nameParts = file.name.split('.');
+    const ext = nameParts.length > 1 ? '.' + nameParts.pop()?.toLowerCase() : '';
+
+    // Check size
+    if (file.size > options.maxFileSize) {
+      errors.push({
+        fileName: file.name,
+        reason: 'size',
+        message: `File too large (${formatBytes(file.size)}). Maximum size is ${formatBytes(options.maxFileSize)}.`,
+      });
+      continue;
+    }
+
+    // Check blocked extensions
+    if (options.blockedExtensions.length > 0 && options.blockedExtensions.includes(ext)) {
+      errors.push({
+        fileName: file.name,
+        reason: 'type',
+        message: `File type ${ext} is not allowed.`,
+      });
+      continue;
+    }
+
+    // Check allowed extensions (if specified)
+    if (options.allowedExtensions.length > 0 && !options.allowedExtensions.includes(ext)) {
+      errors.push({
+        fileName: file.name,
+        reason: 'type',
+        message: `File type ${ext} is not in allowed list.`,
+      });
+      continue;
+    }
+
+    // Only add if within count limit
+    if (valid.length < options.maxFileCount) {
+      valid.push(file);
+    }
+  }
+
+  return { valid, errors };
+};
+
+/**
+ * Validation error for file upload
+ */
+export interface ValidationError {
+  fileName: string;
+  reason: 'size' | 'type' | 'count' | 'unknown';
+  message: string;
+}
+
 export interface FileBrowserProps {
   /** Called when a file download is requested */
   onDownload?: (entry: FileEntry) => void;
@@ -83,6 +167,16 @@ export interface FileBrowserProps {
   store?: FileStore;
   /** Additional CSS class for the container */
   class?: string;
+  /** Maximum file size in bytes (default: 100MB) */
+  maxFileSize?: number;
+  /** Maximum number of files per upload (default: 100) */
+  maxFileCount?: number;
+  /** Allowed file extensions (e.g., ['.txt', '.pdf']). Empty = all allowed */
+  allowedExtensions?: string[];
+  /** Blocked file extensions (e.g., ['.exe', '.dll']) */
+  blockedExtensions?: string[];
+  /** Callback for validation errors */
+  onValidationError?: (errors: ValidationError[]) => void;
 }
 
 export interface FileEntryRowProps {
@@ -231,6 +325,7 @@ const FileBrowser: Component<FileBrowserProps> = (props) => {
   const store = props.store ?? getFileStore();
   const [isDragOver, setIsDragOver] = createSignal(false);
   const [lastSelectedIndex, setLastSelectedIndex] = createSignal<number | null>(null);
+  const [validationErrors, setValidationErrors] = createSignal<ValidationError[]>([]);
 
   let containerRef: HTMLDivElement | undefined;
 
@@ -350,7 +445,25 @@ const FileBrowser: Component<FileBrowserProps> = (props) => {
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       const fileArray = Array.from(files);
-      props.onUpload?.(fileArray);
+
+      // Validate files
+      const { valid, errors } = validateFiles(fileArray, {
+        maxFileSize: props.maxFileSize ?? DEFAULT_MAX_SIZE,
+        maxFileCount: props.maxFileCount ?? DEFAULT_MAX_COUNT,
+        allowedExtensions: props.allowedExtensions ?? [],
+        blockedExtensions: props.blockedExtensions ?? DEFAULT_BLOCKED_EXTENSIONS,
+      });
+
+      // Report validation errors
+      if (errors.length > 0) {
+        setValidationErrors(errors);
+        props.onValidationError?.(errors);
+      }
+
+      // Upload valid files
+      if (valid.length > 0) {
+        props.onUpload?.(valid);
+      }
     }
   };
 
@@ -522,6 +635,33 @@ const FileBrowser: Component<FileBrowserProps> = (props) => {
         </div>
       </Show>
 
+      {/* Validation Errors */}
+      <Show when={validationErrors().length > 0}>
+        <div class="file-browser__validation-errors" data-testid="validation-errors" role="alert">
+          <div class="file-browser__validation-errors-header">
+            <span class="file-browser__validation-errors-title">Upload Validation Errors</span>
+            <button
+              class="file-browser__dismiss-errors"
+              onClick={() => setValidationErrors([])}
+              data-testid="dismiss-errors"
+              aria-label="Dismiss validation errors"
+            >
+              Dismiss
+            </button>
+          </div>
+          <For each={validationErrors()}>
+            {(error) => (
+              <div class="file-browser__validation-error" data-testid={`validation-error-${error.reason}`}>
+                <span class="file-browser__validation-error-icon">!</span>
+                <span class="file-browser__validation-error-message">
+                  {error.fileName ? `${error.fileName}: ` : ''}{error.message}
+                </span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
       {/* Status Bar */}
       <div class="file-browser__status" data-testid="file-status">
         <span data-testid="file-count">
@@ -538,4 +678,4 @@ const FileBrowser: Component<FileBrowserProps> = (props) => {
 };
 
 export default FileBrowser;
-export { FileEntryRow, Breadcrumb, formatDate, getFileIcon };
+export { FileEntryRow, Breadcrumb, formatDate, getFileIcon, validateFiles };
