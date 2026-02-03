@@ -243,6 +243,36 @@ jobs:
         working-directory: client
         run: npm run tauri android init
 
+      - name: Copy custom Android icons
+        working-directory: client
+        run: |
+          # Copy custom RemoShell icons to replace default Tauri icons
+          # Source: src-tauri/icons/android/ -> gen/android/app/src/main/res/
+          echo "Copying custom Android icons..."
+
+          # Copy all mipmap directories (icons for different densities)
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            if [ -d "src-tauri/icons/android/mipmap-$density" ]; then
+              cp -r "src-tauri/icons/android/mipmap-$density" "src-tauri/gen/android/app/src/main/res/"
+              echo "  Copied mipmap-$density"
+            fi
+          done
+
+          # Copy adaptive icon XML (Android 8.0+)
+          if [ -d "src-tauri/icons/android/mipmap-anydpi-v26" ]; then
+            cp -r "src-tauri/icons/android/mipmap-anydpi-v26" "src-tauri/gen/android/app/src/main/res/"
+            echo "  Copied mipmap-anydpi-v26"
+          fi
+
+          # Copy values directory (background color for adaptive icon)
+          if [ -d "src-tauri/icons/android/values" ]; then
+            mkdir -p "src-tauri/gen/android/app/src/main/res/values"
+            cp "src-tauri/icons/android/values/"* "src-tauri/gen/android/app/src/main/res/values/"
+            echo "  Copied values (icon background)"
+          fi
+
+          echo "Android icon copy complete"
+
       - name: Build Android APK
         working-directory: client
         run: npm run tauri android build
@@ -264,10 +294,27 @@ jobs:
         env:
           ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
 
+      - name: Rename APK for release
+        run: |
+          mkdir -p client/dist-android
+          # Find the universal APK (signed if available, unsigned otherwise)
+          APK_DIR="client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          if [ -f "$APK_DIR/app-universal-release-signed.apk" ]; then
+            cp "$APK_DIR/app-universal-release-signed.apk" "client/dist-android/remoshell-client-android.apk"
+          elif [ -f "$APK_DIR/app-universal-release-unsigned.apk" ]; then
+            cp "$APK_DIR/app-universal-release-unsigned.apk" "client/dist-android/remoshell-client-android.apk"
+          else
+            # Fallback: find any APK
+            find "$APK_DIR" -name "*.apk" -type f | head -1 | xargs -I {} cp {} "client/dist-android/remoshell-client-android.apk"
+          fi
+          echo "APK renamed to remoshell-client-android.apk"
+          ls -la client/dist-android/
+
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: client/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: client/dist-android/remoshell-client-android.apk
+          if-no-files-found: error
 
   # ========== WEB BUILD ==========
   build-web:
@@ -394,6 +441,6 @@ jobs:
           files: |
             artifacts/daemon-*/*
             artifacts/desktop-*/**/*
-            artifacts/android-apk/**/*.apk
+            artifacts/android-apk/remoshell-client-android.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
