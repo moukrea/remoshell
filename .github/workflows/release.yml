@@ -250,24 +250,28 @@ jobs:
           # Source: src-tauri/icons/android/ -> gen/android/app/src/main/res/
           echo "Copying custom Android icons..."
 
+          RES_DIR="src-tauri/gen/android/app/src/main/res"
+
           # Copy all mipmap directories (icons for different densities)
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             if [ -d "src-tauri/icons/android/mipmap-$density" ]; then
-              cp -r "src-tauri/icons/android/mipmap-$density" "src-tauri/gen/android/app/src/main/res/"
+              mkdir -p "$RES_DIR/mipmap-$density"
+              cp -r "src-tauri/icons/android/mipmap-$density"/* "$RES_DIR/mipmap-$density/"
               echo "  Copied mipmap-$density"
             fi
           done
 
           # Copy adaptive icon XML (Android 8.0+)
           if [ -d "src-tauri/icons/android/mipmap-anydpi-v26" ]; then
-            cp -r "src-tauri/icons/android/mipmap-anydpi-v26" "src-tauri/gen/android/app/src/main/res/"
+            mkdir -p "$RES_DIR/mipmap-anydpi-v26"
+            cp -r "src-tauri/icons/android/mipmap-anydpi-v26"/* "$RES_DIR/mipmap-anydpi-v26/"
             echo "  Copied mipmap-anydpi-v26"
           fi
 
           # Copy values directory (background color for adaptive icon)
           if [ -d "src-tauri/icons/android/values" ]; then
-            mkdir -p "src-tauri/gen/android/app/src/main/res/values"
-            cp "src-tauri/icons/android/values/"* "src-tauri/gen/android/app/src/main/res/values/"
+            mkdir -p "$RES_DIR/values"
+            cp "src-tauri/icons/android/values"/* "$RES_DIR/values/"
             echo "  Copied values (icon background)"
           fi
 
@@ -284,11 +288,11 @@ jobs:
 
       - name: Sign APK (if secrets available)
         if: ${{ env.ANDROID_SIGNING_KEY != '' }}
-        uses: r0adkll/sign-android-release@v1
+        uses: ilharp/sign-android-release@v1
         with:
-          releaseDirectory: client/src-tauri/gen/android/app/build/outputs/apk/universal/release
-          signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
-          alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          releaseDir: client/src-tauri/gen/android/app/build/outputs/apk/universal/release
+          signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
+          keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
         env:
@@ -299,14 +303,34 @@ jobs:
           mkdir -p client/dist-android
           # Find the universal APK (signed if available, unsigned otherwise)
           APK_DIR="client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
+
+          echo "Looking for APK in: $APK_DIR"
+          ls -la "$APK_DIR" || echo "Directory listing failed"
+
           if [ -f "$APK_DIR/app-universal-release-signed.apk" ]; then
             cp "$APK_DIR/app-universal-release-signed.apk" "client/dist-android/remoshell-client-android.apk"
+            echo "Copied signed APK"
           elif [ -f "$APK_DIR/app-universal-release-unsigned.apk" ]; then
             cp "$APK_DIR/app-universal-release-unsigned.apk" "client/dist-android/remoshell-client-android.apk"
+            echo "Copied unsigned APK"
           else
             # Fallback: find any APK
-            find "$APK_DIR" -name "*.apk" -type f | head -1 | xargs -I {} cp {} "client/dist-android/remoshell-client-android.apk"
+            APK_FILE=$(find "$APK_DIR" -name "*.apk" -type f | head -1)
+            if [ -n "$APK_FILE" ]; then
+              cp "$APK_FILE" "client/dist-android/remoshell-client-android.apk"
+              echo "Copied fallback APK: $APK_FILE"
+            else
+              echo "ERROR: No APK file found in $APK_DIR"
+              exit 1
+            fi
           fi
+
+          # Verify the APK was copied successfully
+          if [ ! -f "client/dist-android/remoshell-client-android.apk" ]; then
+            echo "ERROR: APK was not copied to destination"
+            exit 1
+          fi
+
           echo "APK renamed to remoshell-client-android.apk"
           ls -la client/dist-android/
 
