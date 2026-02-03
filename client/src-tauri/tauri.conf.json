@@ -3,6 +3,9 @@
   "productName": "RemoShell",
   "version": "0.5.2",
   "identifier": "com.remoshell.app",
+  "shortDescription": "Secure remote access application with end-to-end encryption",
+  "longDescription": "RemoShell is a modern secure remote access application that provides encrypted terminal sessions and file transfer between devices. Features a graphical interface for remote terminal access, file browsing, and device management. Uses WebRTC and QUIC for NAT traversal, QR code-based device pairing, and end-to-end encryption via the Noise Protocol.",
+  "category": "Network",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
@@ -48,14 +51,6 @@
     },
     "android": {
       "minSdkVersion": 24
-    }
-  },
-  "plugins": {
-    "notification": {
-      "all": true
-    },
-    "barcode-scanner": {
-      "all": true
     }
   }
 }
