@@ -4,7 +4,7 @@ name = "remoshell-app"
 # Do not modify manually - use scripts/bump-version.sh to update all versions.
 # CI will fail if this version differs from the workspace Cargo.toml.
 # See docs/VERSIONING.md for more information.
-version = "0.5.3"
+version = "0.5.4"
 description = "RemoShell - Remote Shell Access Application"
 authors = ["RemoShell Contributors"]
 license = "MIT OR Apache-2.0"
