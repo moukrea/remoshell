@@ -283,18 +283,37 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
 
-      - name: Install Android build-tools for signing
-        run: sdkmanager "build-tools;29.0.3"
-
       - name: Sign APK (if secrets available)
         if: ${{ env.ANDROID_SIGNING_KEY != '' }}
-        uses: ilharp/sign-android-release@v1
-        with:
-          releaseDir: client/src-tauri/gen/android/app/build/outputs/apk/universal/release
-          signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
-          keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          APK_DIR="client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          UNSIGNED_APK="$APK_DIR/app-universal-release-unsigned.apk"
+          SIGNED_APK="$APK_DIR/app-universal-release-signed.apk"
+
+          # Decode keystore from base64
+          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 -d > /tmp/keystore.jks
+
+          # Find apksigner (use build-tools from SDK)
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_SDK_ROOT/build-tools/*/ | sort -V | tail -1)
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+
+          echo "Using apksigner: $APKSIGNER"
+          echo "Signing APK: $UNSIGNED_APK"
+
+          # Sign the APK
+          "$APKSIGNER" sign \
+            --ks /tmp/keystore.jks \
+            --ks-key-alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
+            --ks-pass "pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.ANDROID_KEY_PASSWORD }}" \
+            --out "$SIGNED_APK" \
+            "$UNSIGNED_APK"
+
+          # Clean up keystore
+          rm -f /tmp/keystore.jks
+
+          echo "APK signed successfully"
+          ls -la "$APK_DIR"
         env:
           ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
 
