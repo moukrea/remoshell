@@ -116,6 +116,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install git-cliff
+        run: |
+          GC_URL=$(curl -s https://api.github.com/repos/orhun/git-cliff/releases/latest \
+            | jq -r '.assets[] | select(.name | test("x86_64-unknown-linux-gnu.tar.gz$")) | .browser_download_url')
+          curl -sSfL "$GC_URL" | tar xz --strip-components=1 -C /usr/local/bin
+          git-cliff --version
+
       - name: Generate changelog
         id: changelog
         run: |
