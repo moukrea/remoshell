@@ -1,0 +1,47 @@
+/* Mobile Safe Area Support for Android/iOS */
+
+:root {
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+}
+
+/* Use dynamic viewport height on mobile */
+@supports (height: 100dvh) {
+  html, body, #root {
+    height: 100dvh;
+  }
+
+  .app-shell {
+    height: 100dvh;
+  }
+
+  .sidebar {
+    height: 100dvh;
+  }
+}
+
+/* Mobile: Apply safe area padding */
+@media (max-width: 768px) {
+  .app-shell {
+    padding-top: var(--safe-area-inset-top);
+    padding-bottom: var(--safe-area-inset-bottom);
+    padding-left: var(--safe-area-inset-left);
+    padding-right: var(--safe-area-inset-right);
+  }
+
+  .app-shell__header {
+    padding-top: max(0.5rem, var(--safe-area-inset-top));
+  }
+
+  .app-shell__sidebar {
+    padding-top: var(--safe-area-inset-top);
+    padding-left: var(--safe-area-inset-left);
+    padding-bottom: var(--safe-area-inset-bottom);
+  }
+
+  .app-shell__content {
+    padding-bottom: max(1rem, var(--safe-area-inset-bottom));
+  }
+}

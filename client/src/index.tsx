@@ -4,6 +4,7 @@ import '@unocss/reset/tailwind.css';
 import 'virtual:uno.css';
 import './styles/accessibility.css';
 import './styles/components.css';
+import './styles/mobile-safe-areas.css';
 import App from './App';
 
 const root = document.getElementById('root');

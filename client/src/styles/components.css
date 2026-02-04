@@ -7,6 +7,7 @@ html, body, #root {
 .app-shell {
   display: flex;
   height: 100vh;
+  height: 100dvh; /* Modern browsers */
   background: var(--bg-primary, #0a0a14);
   color: var(--text-primary, #e4e4e7);
 }
@@ -56,6 +57,8 @@ html, body, #root {
   justify-content: space-between;
   padding: 0 1rem;
   background: var(--bg-secondary, #18181b);
+  position: relative;
+  z-index: 55; /* Above sidebar (50) and overlay (40) */
 }
 
 .header__left,
@@ -170,14 +173,28 @@ html, body, #root {
 
 .header__mobile-menu-btn {
   display: none;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 48px;
+  min-height: 48px;
   padding: 0.75rem;
-  background: transparent;
-  border: none;
+  background: var(--bg-secondary, #18181b);
+  border: 1px solid var(--border-color, #27272a);
+  border-radius: 8px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
+  color: var(--text-primary, #e4e4e7);
+  z-index: 60;
+  transition: background-color 0.15s ease;
+}
+
+.header__mobile-menu-btn:hover,
+.header__mobile-menu-btn:focus {
+  background: var(--bg-tertiary, #27272a);
+}
+
+.header__mobile-menu-btn:active {
+  background: var(--accent-color, #3b82f6);
+  transform: scale(0.95);
 }
 
 .header__theme-toggle {
@@ -226,6 +243,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* Modern browsers */
   background: var(--bg-secondary, #18181b);
   border-right: 1px solid var(--border-color, #27272a);
 }
@@ -829,6 +847,8 @@ html, body, #root {
 
   .header__mobile-menu-btn {
     display: flex;
+    /* Ensure button is prominent on mobile */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   }
 
   .sidebar__collapse-btn {
