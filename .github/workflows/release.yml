@@ -1,7 +1,9 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -14,8 +16,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ========== RELEASE GATE ==========
+  gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      head_sha: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check CI result and event type
+        id: check
+        run: |
+          echo "CI workflow conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo "CI workflow event: ${{ github.event.workflow_run.event }}"
+
+          # Only release if CI passed AND it was a push (not PR)
+          if [[ "${{ github.event.workflow_run.conclusion }}" == "success" && \
+                "${{ github.event.workflow_run.event }}" == "push" ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "Release gate: PASSED"
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "Release gate: BLOCKED (CI: ${{ github.event.workflow_run.conclusion }}, Event: ${{ github.event.workflow_run.event }})"
+          fi
+
   # ========== VERSION & CHANGELOG ==========
   prepare:
+    needs: gate
+    if: ${{ needs.gate.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.new_version }}
@@ -24,6 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.gate.outputs.head_sha }}
           fetch-depth: 0
 
       - name: Get latest tag and bump version
@@ -146,12 +175,13 @@ jobs:
 
   # ========== DAEMON BUILD (Linux only for now) ==========
   build-daemon:
-    needs: prepare
+    needs: [gate, prepare]
+    if: ${{ needs.gate.outputs.should_release == 'true' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.gate.outputs.head_sha }}
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -170,12 +200,13 @@ jobs:
 
   # ========== DESKTOP BUILD (Linux only for now) ==========
   build-desktop:
-    needs: prepare
+    needs: [gate, prepare]
+    if: ${{ needs.gate.outputs.should_release == 'true' }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.gate.outputs.head_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -186,10 +217,10 @@ jobs:
         with:
           workspaces: client/src-tauri -> target
 
-      - name: Install Linux dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend dependencies
         working-directory: client
@@ -211,12 +242,16 @@ jobs:
 
   # ========== ANDROID BUILD ==========
   build-android:
-    needs: prepare
+    needs: [gate, prepare]
+    if: ${{ needs.gate.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      # Evaluate secret availability at job level for use in step conditions
+      HAS_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.gate.outputs.head_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -283,39 +318,41 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125
 
-      - name: Sign APK (if secrets available)
-        if: ${{ env.ANDROID_SIGNING_KEY != '' }}
+      - name: Sign APK
+        if: ${{ env.HAS_SIGNING_KEY == 'true' }}
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           APK_DIR="client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
           UNSIGNED_APK="$APK_DIR/app-universal-release-unsigned.apk"
           SIGNED_APK="$APK_DIR/app-universal-release-signed.apk"
 
           # Decode keystore from base64
-          echo "${{ secrets.ANDROID_SIGNING_KEY }}" | base64 -d > /tmp/keystore.jks
+          echo "$ANDROID_SIGNING_KEY" | base64 -d > /tmp/keystore.jks
 
-          # Find apksigner (use build-tools from SDK)
+          # Find apksigner
           BUILD_TOOLS_DIR=$(ls -d $ANDROID_SDK_ROOT/build-tools/*/ | sort -V | tail -1)
-          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+          APKSIGNER="${BUILD_TOOLS_DIR}apksigner"
 
           echo "Using apksigner: $APKSIGNER"
-          echo "Signing APK: $UNSIGNED_APK"
+          echo "Signing: $UNSIGNED_APK"
 
-          # Sign the APK
           "$APKSIGNER" sign \
             --ks /tmp/keystore.jks \
-            --ks-key-alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
-            --ks-pass "pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-            --key-pass "pass:${{ secrets.ANDROID_KEY_PASSWORD }}" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --key-pass "pass:$ANDROID_KEY_PASSWORD" \
             --out "$SIGNED_APK" \
             "$UNSIGNED_APK"
 
-          # Clean up keystore
+          # Cleanup
           rm -f /tmp/keystore.jks
 
           echo "APK signed successfully"
           ls -la "$APK_DIR"
-        env:
-          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
 
       - name: Rename APK for release
         run: |
@@ -361,12 +398,13 @@ jobs:
 
   # ========== WEB BUILD ==========
   build-web:
-    needs: prepare
+    needs: [gate, prepare]
+    if: ${{ needs.gate.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.gate.outputs.head_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -393,7 +431,8 @@ jobs:
 
   # ========== DEPLOY GITHUB PAGES ==========
   deploy-pages:
-    needs: build-web
+    needs: [gate, build-web]
+    if: ${{ needs.gate.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -405,13 +444,13 @@ jobs:
 
   # ========== CREATE RELEASE ==========
   create-release:
-    needs: [prepare, build-daemon, build-desktop, build-android]
-    if: always() && needs.prepare.result == 'success'
+    needs: [gate, prepare, build-daemon, build-desktop, build-android]
+    if: always() && needs.gate.outputs.should_release == 'true' && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ needs.gate.outputs.head_sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
