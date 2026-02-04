@@ -177,10 +177,10 @@ mod tests {
         // Just verify it doesn't panic and returns expected types
         let result = get_daemon_pid();
         // result is Option<u32> - verify it's a valid type
-        match result {
-            Some(pid) => assert!(pid > 0, "If a PID is returned, it should be positive"),
-            None => {} // Expected in most test environments
+        if let Some(pid) = result {
+            assert!(pid > 0, "If a PID is returned, it should be positive");
         }
+        // None is expected in most test environments
     }
 
     #[test]
