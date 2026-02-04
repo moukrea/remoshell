@@ -173,7 +173,8 @@ impl IpcClient {
         session_id: String,
         signal: Option<i32>,
     ) -> Result<IpcResponse, IpcError> {
-        self.send(IpcRequest::KillSession { session_id, signal }).await
+        self.send(IpcRequest::KillSession { session_id, signal })
+            .await
     }
 }
 
@@ -420,10 +421,9 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        let mut client =
-            IpcClient::connect_with_timeout(&socket_path, Duration::from_millis(100))
-                .await
-                .unwrap();
+        let mut client = IpcClient::connect_with_timeout(&socket_path, Duration::from_millis(100))
+            .await
+            .unwrap();
 
         let result = client.ping().await;
         assert!(result.is_err());

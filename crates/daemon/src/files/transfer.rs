@@ -271,7 +271,9 @@ impl FileTransfer {
         let mut uploads = self
             .uploads
             .write()
-            .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during start_upload".to_string() })?;
+            .map_err(|_| TransferError::LockPoisoned {
+                context: "uploads lock during start_upload".to_string(),
+            })?;
 
         uploads.insert(key, state);
 
@@ -285,7 +287,9 @@ impl FileTransfer {
         let mut uploads = self
             .uploads
             .write()
-            .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during write_chunk".to_string() })?;
+            .map_err(|_| TransferError::LockPoisoned {
+                context: "uploads lock during write_chunk".to_string(),
+            })?;
 
         let state = uploads
             .get_mut(&key)
@@ -326,7 +330,9 @@ impl FileTransfer {
             let mut uploads = self
                 .uploads
                 .write()
-                .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during complete_upload".to_string() })?;
+                .map_err(|_| TransferError::LockPoisoned {
+                    context: "uploads lock during complete_upload".to_string(),
+                })?;
 
             uploads
                 .remove(&key)
@@ -384,7 +390,9 @@ impl FileTransfer {
             let mut uploads = self
                 .uploads
                 .write()
-                .map_err(|_| TransferError::LockPoisoned { context: "uploads lock during cancel_upload".to_string() })?;
+                .map_err(|_| TransferError::LockPoisoned {
+                    context: "uploads lock during cancel_upload".to_string(),
+                })?;
 
             uploads.remove(&key)
         };
@@ -408,10 +416,7 @@ impl FileTransfer {
     }
 
     /// Clean up stale uploads older than the given duration.
-    pub fn cleanup_stale_uploads(
-        &self,
-        max_age: std::time::Duration,
-    ) -> Result<(), TransferError> {
+    pub fn cleanup_stale_uploads(&self, max_age: std::time::Duration) -> Result<(), TransferError> {
         // For now, just clean up the temp directory
         if self.temp_dir.exists() {
             for entry in fs::read_dir(&self.temp_dir)? {

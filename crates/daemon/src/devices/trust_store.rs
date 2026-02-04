@@ -485,14 +485,13 @@ impl TrustStore {
     pub fn approve_pending(&self, device_id: &DeviceId) -> Result<()> {
         // First, remove from pending
         let pending_device = {
-            let mut pending = self
-                .pending_approvals
-                .write()
-                .map_err(|_| anyhow::anyhow!("Failed to acquire write lock on pending approvals"))?;
+            let mut pending = self.pending_approvals.write().map_err(|_| {
+                anyhow::anyhow!("Failed to acquire write lock on pending approvals")
+            })?;
 
-            pending
-                .remove(device_id)
-                .ok_or_else(|| anyhow::anyhow!("Device {} not found in pending approvals", device_id))?
+            pending.remove(device_id).ok_or_else(|| {
+                anyhow::anyhow!("Device {} not found in pending approvals", device_id)
+            })?
         };
 
         // Create a trusted device from the pending approval
@@ -527,11 +526,7 @@ impl TrustStore {
         let removed = pending.remove(device_id);
 
         if let Some(ref device) = removed {
-            tracing::info!(
-                "Rejected device {} ({})",
-                device_id,
-                device.device_name
-            );
+            tracing::info!("Rejected device {} ({})", device_id, device.device_name);
         }
 
         Ok(removed.is_some())

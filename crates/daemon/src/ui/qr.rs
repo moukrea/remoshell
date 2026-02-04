@@ -758,11 +758,8 @@ mod tests {
 
         // Test that the QR code can handle the typical content size
         let identity = protocol::DeviceIdentity::generate();
-        let info = PairingInfo::from_identity(
-            &identity,
-            DEFAULT_SIGNALING_URL.to_string(),
-            Some(300),
-        );
+        let info =
+            PairingInfo::from_identity(&identity, DEFAULT_SIGNALING_URL.to_string(), Some(300));
 
         let json = info.to_json().expect("Failed to serialize");
 

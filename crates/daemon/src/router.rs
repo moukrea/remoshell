@@ -166,7 +166,9 @@ impl<S: SessionManager> MessageRouter<S> {
                 );
                 Err(RouterError::Permission(format!(
                     "Device {} not permitted to {:?} path: {}",
-                    device_id, operation, path.display()
+                    device_id,
+                    operation,
+                    path.display()
                 )))
             }
             Err(e) => {
@@ -193,12 +195,12 @@ impl<S: SessionManager> MessageRouter<S> {
         match self.trust_store.get_device(device_id) {
             Ok(Some(device)) => match device.trust_level {
                 TrustLevel::Trusted => Ok(()),
-                TrustLevel::Unknown => Err(RouterError::Device(
-                    "Device pending approval".to_string(),
-                )),
-                TrustLevel::Revoked => Err(RouterError::Device(
-                    "Device has been revoked".to_string(),
-                )),
+                TrustLevel::Unknown => {
+                    Err(RouterError::Device("Device pending approval".to_string()))
+                }
+                TrustLevel::Revoked => {
+                    Err(RouterError::Device("Device has been revoked".to_string()))
+                }
             },
             Ok(None) => Err(RouterError::Device("Device not registered".to_string())),
             Err(e) => Err(RouterError::Device(format!(
@@ -412,11 +414,7 @@ impl<S: SessionManager> MessageRouter<S> {
     // File Handlers
     // =========================================================================
 
-    async fn handle_file_list(
-        &self,
-        req: FileListRequest,
-        device_id: &DeviceId,
-    ) -> RouterResult {
+    async fn handle_file_list(&self, req: FileListRequest, device_id: &DeviceId) -> RouterResult {
         debug!(path = %req.path, include_hidden = req.include_hidden, "Listing directory");
 
         let path = Path::new(&req.path);
@@ -594,7 +592,7 @@ impl<S: SessionManager> MessageRouter<S> {
             // is minimal since the attacker already knows both keys)
             if &claimed_key != authenticated_key {
                 warn!(
-                    claimed = ?hex::encode(&claimed_key),
+                    claimed = ?hex::encode(claimed_key),
                     authenticated = ?hex::encode(authenticated_key),
                     "Public key mismatch - possible spoofing attempt"
                 );
@@ -883,7 +881,9 @@ mod tests {
         // Set up default permissions for test device (allow all within temp_dir)
         let device_id = test_device_id();
         let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         MessageRouter::new(
             session_manager,
@@ -902,11 +902,8 @@ mod tests {
     /// Creates a trusted device in the trust store and returns its device ID.
     fn create_trusted_device(trust_store: &TrustStore) -> DeviceId {
         let device_id = test_device_id();
-        let device = crate::devices::TrustedDevice::new(
-            device_id,
-            "Test Device".to_string(),
-            [0u8; 32],
-        );
+        let device =
+            crate::devices::TrustedDevice::new(device_id, "Test Device".to_string(), [0u8; 32]);
         trust_store.add_device(device).unwrap();
         device_id
     }
@@ -934,7 +931,9 @@ mod tests {
 
         // Set up default permissions for trusted device (allow all within temp_dir)
         let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,
@@ -999,7 +998,9 @@ mod tests {
 
         // Set up permissions for the device
         let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,
@@ -1036,7 +1037,11 @@ mod tests {
 
         match result {
             Err(RouterError::Device(msg)) => {
-                assert!(msg.contains("not registered"), "Expected 'not registered' error, got: {}", msg);
+                assert!(
+                    msg.contains("not registered"),
+                    "Expected 'not registered' error, got: {}",
+                    msg
+                );
             }
             _ => panic!("Expected RouterError::Device"),
         }
@@ -1070,7 +1075,9 @@ mod tests {
 
         // Set up permissions for the device
         let device_perms = crate::files::DevicePermissions::allow_all_dangerous(device_id);
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,
@@ -1093,7 +1100,11 @@ mod tests {
 
         match result {
             Err(RouterError::Device(msg)) => {
-                assert!(msg.contains("pending"), "Expected 'pending' error, got: {}", msg);
+                assert!(
+                    msg.contains("pending"),
+                    "Expected 'pending' error, got: {}",
+                    msg
+                );
             }
             _ => panic!("Expected RouterError::Device"),
         }
@@ -1501,7 +1512,11 @@ mod tests {
             session_id: "test".to_string(),
             pid: 123,
         });
-        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
+        assert!(router
+            .route(msg, &test_device_id(), None)
+            .await
+            .unwrap()
+            .is_none());
 
         // SessionClosed
         let msg = Message::SessionClosed(SessionClosed {
@@ -1510,14 +1525,22 @@ mod tests {
             signal: None,
             reason: None,
         });
-        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
+        assert!(router
+            .route(msg, &test_device_id(), None)
+            .await
+            .unwrap()
+            .is_none());
 
         // FileListResponse
         let msg = Message::FileListResponse(FileListResponse {
             path: "/tmp".to_string(),
             entries: vec![],
         });
-        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
+        assert!(router
+            .route(msg, &test_device_id(), None)
+            .await
+            .unwrap()
+            .is_none());
 
         // FileDownloadChunk
         let msg = Message::FileDownloadChunk(FileDownloadChunk {
@@ -1527,7 +1550,11 @@ mod tests {
             data: vec![],
             is_last: true,
         });
-        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
+        assert!(router
+            .route(msg, &test_device_id(), None)
+            .await
+            .unwrap()
+            .is_none());
 
         // DeviceApproved
         let msg = Message::DeviceApproved(DeviceApproved {
@@ -1535,7 +1562,11 @@ mod tests {
             expires_at: None,
             allowed_capabilities: vec![],
         });
-        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
+        assert!(router
+            .route(msg, &test_device_id(), None)
+            .await
+            .unwrap()
+            .is_none());
 
         // DeviceRejected
         let msg = Message::DeviceRejected(DeviceRejected {
@@ -1543,7 +1574,11 @@ mod tests {
             reason: "test".to_string(),
             retry_allowed: false,
         });
-        assert!(router.route(msg, &test_device_id(), None).await.unwrap().is_none());
+        assert!(router
+            .route(msg, &test_device_id(), None)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     // =========================================================================
@@ -1619,7 +1654,9 @@ mod tests {
         // Create a device with NO permissions (default is None)
         let device_id = DeviceId::from_bytes([3u8; 16]);
         let device_perms = crate::files::DevicePermissions::new(device_id);
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,
@@ -1633,7 +1670,11 @@ mod tests {
         std::fs::create_dir(temp_dir.path().join("test_dir")).unwrap();
 
         let msg = Message::FileListRequest(FileListRequest {
-            path: temp_dir.path().join("test_dir").to_string_lossy().to_string(),
+            path: temp_dir
+                .path()
+                .join("test_dir")
+                .to_string_lossy()
+                .to_string(),
             include_hidden: false,
         });
 
@@ -1662,7 +1703,9 @@ mod tests {
         // Create a device with NO permissions
         let device_id = DeviceId::from_bytes([4u8; 16]);
         let device_perms = crate::files::DevicePermissions::new(device_id);
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,
@@ -1710,7 +1753,9 @@ mod tests {
         device_perms.add_path(crate::files::permissions::PathPermission::read_only(
             temp_dir.path().to_path_buf(),
         ));
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,
@@ -1757,7 +1802,9 @@ mod tests {
         device_perms.add_path(crate::files::permissions::PathPermission::read_write(
             temp_dir.path().to_path_buf(),
         ));
-        path_permissions.set_device_permissions(device_perms).unwrap();
+        path_permissions
+            .set_device_permissions(device_perms)
+            .unwrap();
 
         let router = MessageRouter::new(
             session_manager,

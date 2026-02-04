@@ -16,9 +16,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
-use crate::ipc::{get_socket_path, IpcRequest, IpcResponse, IpcServer, IpcSessionInfo};
 use crate::devices::TrustStore;
 use crate::files::{DirectoryBrowser, FileTransfer, PathPermissions};
+use crate::ipc::{get_socket_path, IpcRequest, IpcResponse, IpcServer, IpcSessionInfo};
 use crate::network::{
     signaling::{
         ConnectionState, SignalingClient, SignalingConfig, SignalingEvent, WebSocketSignalingClient,
@@ -144,7 +144,9 @@ impl DaemonOrchestrator {
         // Initialize path permissions
         let permissions_path = config.daemon.data_dir.join("permissions.json");
         let path_permissions = Arc::new(PathPermissions::new(permissions_path, allowed_paths));
-        path_permissions.load().context("Failed to load path permissions")?;
+        path_permissions
+            .load()
+            .context("Failed to load path permissions")?;
 
         // Initialize message router
         let router = Arc::new(MessageRouter::new(
@@ -437,6 +439,7 @@ impl DaemonOrchestrator {
     }
 
     /// Handles an incoming WebRTC offer.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_offer(
         signaling_client: &Arc<WebSocketSignalingClient>,
         identity: &DeviceIdentity,
@@ -473,13 +476,16 @@ impl DaemonOrchestrator {
         handler.setup_incoming_data_channels().await;
 
         // Parse and set remote description (offer)
-        let offer = match webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(sdp) {
-            Ok(o) => o,
-            Err(e) => {
-                error!("Invalid SDP offer: {}", e);
-                return;
-            }
-        };
+        let offer =
+            match webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(
+                sdp,
+            ) {
+                Ok(o) => o,
+                Err(e) => {
+                    error!("Invalid SDP offer: {}", e);
+                    return;
+                }
+            };
         if let Err(e) = handler.set_remote_description(offer).await {
             error!("Failed to set remote description: {}", e);
             return;
@@ -618,7 +624,9 @@ impl DaemonOrchestrator {
                 Err(e) => {
                     // Check if this is a "no data" error or a real connection error
                     let error_str = e.to_string();
-                    if error_str.contains("channel closed") || error_str.contains("connection closed") {
+                    if error_str.contains("channel closed")
+                        || error_str.contains("connection closed")
+                    {
                         // Connection might be closed or had an error
                         debug!(device_id = %device_id, error = %e, "Error receiving message, connection may be closed");
                         // Remove connection and emit disconnect event
@@ -656,7 +664,9 @@ impl DaemonOrchestrator {
             // Get the authenticated public key from the connection for device verification
             let authenticated_public_key = {
                 let conns = connections.read().await;
-                conns.get(&device_id).and_then(|conn| conn.handler.peer_public_key())
+                conns
+                    .get(&device_id)
+                    .and_then(|conn| conn.handler.peer_public_key())
             };
 
             // Route the message through the router
@@ -679,7 +689,9 @@ impl DaemonOrchestrator {
                         Ok(response_data) => {
                             let mut conns = connections.write().await;
                             if let Some(conn) = conns.get_mut(&device_id) {
-                                if let Err(e) = conn.handler.send(channel_type, &response_data).await {
+                                if let Err(e) =
+                                    conn.handler.send(channel_type, &response_data).await
+                                {
                                     warn!(device_id = %device_id, error = %e, "Failed to send response");
                                 }
                             }
@@ -807,7 +819,8 @@ impl DaemonOrchestrator {
             return;
         }
 
-        let mut interval = tokio::time::interval(Duration::from_secs(APPROVAL_CLEANUP_INTERVAL_SECS));
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(APPROVAL_CLEANUP_INTERVAL_SECS));
 
         loop {
             tokio::select! {
@@ -995,9 +1008,7 @@ impl DaemonOrchestrator {
         match request {
             IpcRequest::Ping => IpcResponse::Pong,
             IpcRequest::Status => {
-                let uptime_secs = start_time
-                    .map(|t| t.elapsed().as_secs())
-                    .unwrap_or(0);
+                let uptime_secs = start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 let session_count = session_manager.count();
                 let device_count = connections.read().await.len();
                 IpcResponse::Status {

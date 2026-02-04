@@ -986,7 +986,10 @@ mod tests {
 
         // First call should succeed and return Some
         let events = client.events();
-        assert!(events.is_some(), "First call to events() should return Some");
+        assert!(
+            events.is_some(),
+            "First call to events() should return Some"
+        );
         let _events = events.unwrap();
 
         // Second call should return None (already taken)
@@ -1142,7 +1145,9 @@ mod tests {
             .with_initial_backoff(Duration::from_millis(100));
 
         let client = Arc::new(WebSocketSignalingClient::new(config));
-        let mut events = client.events().expect("events() should return receiver on first call");
+        let mut events = client
+            .events()
+            .expect("events() should return receiver on first call");
 
         // Start the client
         client.clone().start();

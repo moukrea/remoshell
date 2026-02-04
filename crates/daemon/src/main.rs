@@ -232,7 +232,10 @@ async fn main() -> anyhow::Result<()> {
 
             match query_daemon_status().await {
                 Ok(status) => {
-                    println!("Daemon Status: {}", if status.running { "running" } else { "stopped" });
+                    println!(
+                        "Daemon Status: {}",
+                        if status.running { "running" } else { "stopped" }
+                    );
                     println!("  Uptime:   {}", format_duration(status.uptime_secs));
                     println!("  Sessions: {}", status.session_count);
                     println!("  Devices:  {}", status.device_count);
@@ -281,33 +284,27 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sessions(cmd) => {
             // Sessions commands require a running daemon
             match cmd {
-                SessionsCommands::List { json } => {
-                    match query_sessions_list().await {
-                        Ok(sessions) => {
-                            if json {
-                                println!("{}", serde_json::to_string_pretty(&sessions).unwrap());
-                            } else {
-                                print_sessions_table(&sessions);
-                            }
-                            std::process::exit(0);
+                SessionsCommands::List { json } => match query_sessions_list().await {
+                    Ok(sessions) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&sessions).unwrap());
+                        } else {
+                            print_sessions_table(&sessions);
                         }
-                        Err(e) => {
-                            eprintln!("Failed to list sessions: {}", e);
-                            std::process::exit(1);
-                        }
+                        std::process::exit(0);
                     }
-                }
+                    Err(e) => {
+                        eprintln!("Failed to list sessions: {}", e);
+                        std::process::exit(1);
+                    }
+                },
                 SessionsCommands::Kill {
                     session_id,
                     signal,
                     force,
                 } => {
                     // Determine the signal to send
-                    let signal_to_send = if force {
-                        "SIGKILL".to_string()
-                    } else {
-                        signal
-                    };
+                    let signal_to_send = if force { "SIGKILL".to_string() } else { signal };
 
                     // Parse the signal
                     let signal_num = match parse_signal(&signal_to_send) {
@@ -553,7 +550,9 @@ async fn kill_session(session_id: &str, signal: i32) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to send kill request: {}", e))?;
 
     match response {
-        IpcResponse::SessionKilled { session_id: killed_id } => {
+        IpcResponse::SessionKilled {
+            session_id: killed_id,
+        } => {
             if killed_id == session_id {
                 Ok(())
             } else {
@@ -589,7 +588,9 @@ fn print_sessions_table(sessions: &[daemon::ipc::IpcSessionInfo]) {
     // Print header
     println!(
         "{:<id_width$}  {:<peer_width$}  {:>12}",
-        "ID", "PEER ID", "CONNECTED",
+        "ID",
+        "PEER ID",
+        "CONNECTED",
         id_width = id_width,
         peer_width = peer_width
     );
@@ -1138,9 +1139,15 @@ mod tests {
 
     #[test]
     fn test_sessions_kill_with_signal_number() {
-        let cli =
-            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "--signal", "9"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "remoshell",
+            "sessions",
+            "kill",
+            "session123",
+            "--signal",
+            "9",
+        ])
+        .unwrap();
         match cli.command {
             Commands::Sessions(SessionsCommands::Kill {
                 session_id,
@@ -1157,9 +1164,15 @@ mod tests {
 
     #[test]
     fn test_sessions_kill_with_short_signal() {
-        let cli =
-            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "-s", "SIGHUP"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "remoshell",
+            "sessions",
+            "kill",
+            "session123",
+            "-s",
+            "SIGHUP",
+        ])
+        .unwrap();
         match cli.command {
             Commands::Sessions(SessionsCommands::Kill {
                 session_id,
@@ -1176,8 +1189,8 @@ mod tests {
 
     #[test]
     fn test_sessions_kill_with_force() {
-        let cli =
-            Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "--force"]).unwrap();
+        let cli = Cli::try_parse_from(["remoshell", "sessions", "kill", "session123", "--force"])
+            .unwrap();
         match cli.command {
             Commands::Sessions(SessionsCommands::Kill {
                 session_id,

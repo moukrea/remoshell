@@ -929,7 +929,9 @@ impl TuiApp {
                 Line::from(vec![
                     Span::styled("PID: ", Style::default().fg(Color::Gray)),
                     Span::styled(
-                        s.pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string()),
+                        s.pid
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "N/A".to_string()),
                         Style::default().fg(Color::White),
                     ),
                 ]),
@@ -958,13 +960,15 @@ impl TuiApp {
         } else {
             vec![
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled("  No session selected", Style::default().fg(Color::DarkGray)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "  No session selected",
+                    Style::default().fg(Color::DarkGray),
+                )]),
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled("  Use j/k or Up/Down to select", Style::default().fg(Color::DarkGray)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "  Use j/k or Up/Down to select",
+                    Style::default().fg(Color::DarkGray),
+                )]),
             ]
         };
 

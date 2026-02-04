@@ -156,10 +156,7 @@ mod tests {
         }
         let path = get_socket_path();
         // Should contain /tmp/remoshell- prefix
-        assert!(path
-            .to_str()
-            .unwrap()
-            .starts_with("/tmp/remoshell-"));
+        assert!(path.to_str().unwrap().starts_with("/tmp/remoshell-"));
         assert!(path.to_str().unwrap().ends_with("/daemon.sock"));
 
         // Restore original value

@@ -195,20 +195,14 @@ impl Config {
     pub fn apply_env_overrides(&mut self) {
         if let Ok(url) = std::env::var("REMOSHELL_SIGNALING_URL") {
             if !url.is_empty() {
-                tracing::info!(
-                    "Overriding signaling_url from environment: {}",
-                    url
-                );
+                tracing::info!("Overriding signaling_url from environment: {}", url);
                 self.network.signaling_url = url;
             }
         }
 
         if let Ok(level) = std::env::var("REMOSHELL_LOG_LEVEL") {
             if !level.is_empty() {
-                tracing::info!(
-                    "Overriding log_level from environment: {}",
-                    level
-                );
+                tracing::info!("Overriding log_level from environment: {}", level);
                 self.daemon.log_level = level;
             }
         }
@@ -225,7 +219,9 @@ impl Config {
 
         // Validate approval_timeout: 0-3600
         if self.security.approval_timeout > 3600 {
-            return Err(ConfigError::InvalidApprovalTimeout(self.security.approval_timeout));
+            return Err(ConfigError::InvalidApprovalTimeout(
+                self.security.approval_timeout,
+            ));
         }
 
         // Validate max_size: > 0
@@ -261,9 +257,7 @@ impl Config {
         // Validate log_level is a known value
         let level = self.daemon.log_level.to_lowercase();
         if !VALID_LOG_LEVELS.contains(&level.as_str()) {
-            return Err(ConfigError::InvalidLogLevel(
-                self.daemon.log_level.clone(),
-            ));
+            return Err(ConfigError::InvalidLogLevel(self.daemon.log_level.clone()));
         }
 
         Ok(())
@@ -793,10 +787,7 @@ approval_timeout = 0
     fn test_validate_max_sessions_too_low() {
         let mut config = Config::default();
         config.session.max_sessions = 0;
-        assert_eq!(
-            config.validate(),
-            Err(ConfigError::InvalidMaxSessions(0))
-        );
+        assert_eq!(config.validate(), Err(ConfigError::InvalidMaxSessions(0)));
     }
 
     #[test]
@@ -823,10 +814,7 @@ approval_timeout = 0
     fn test_validate_max_size_zero() {
         let mut config = Config::default();
         config.file.max_size = 0;
-        assert_eq!(
-            config.validate(),
-            Err(ConfigError::InvalidMaxSize(0))
-        );
+        assert_eq!(config.validate(), Err(ConfigError::InvalidMaxSize(0)));
     }
 
     #[test]
@@ -874,7 +862,9 @@ approval_timeout = 0
         config.network.signaling_url = "http://example.com".to_string();
         assert_eq!(
             config.validate(),
-            Err(ConfigError::InvalidSignalingUrl("http://example.com".to_string()))
+            Err(ConfigError::InvalidSignalingUrl(
+                "http://example.com".to_string()
+            ))
         );
     }
 
@@ -884,7 +874,9 @@ approval_timeout = 0
         config.network.signaling_url = "https://example.com".to_string();
         assert_eq!(
             config.validate(),
-            Err(ConfigError::InvalidSignalingUrl("https://example.com".to_string()))
+            Err(ConfigError::InvalidSignalingUrl(
+                "https://example.com".to_string()
+            ))
         );
     }
 

@@ -185,13 +185,16 @@ fn create_test_router(temp_dir: &TempDir) -> MessageRouter<MockSessionManager> {
 
     // Register a trusted device for tests that require session operations
     let device_id = test_device_id();
-    let device = daemon::devices::TrustedDevice::new(device_id, "Test Device".to_string(), [0u8; 32]);
+    let device =
+        daemon::devices::TrustedDevice::new(device_id, "Test Device".to_string(), [0u8; 32]);
     trust_store.add_device(device).unwrap();
 
     // Set up permissions for the test device (allow all within temp_dir)
     // Using allow_all_dangerous() is acceptable here since this is a test environment
     let device_perms = daemon::files::DevicePermissions::allow_all_dangerous(device_id);
-    path_permissions.set_device_permissions(device_perms).unwrap();
+    path_permissions
+        .set_device_permissions(device_perms)
+        .unwrap();
 
     MessageRouter::new(
         session_manager,
@@ -589,12 +592,15 @@ async fn test_pending_approval_flow() {
 
     let temp_dir = TempDir::new().unwrap();
     let session_manager = Arc::new(MockSessionManager::new());
-    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let browser_for_transfer =
+        daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
     let file_transfer = Arc::new(
         daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
             .with_temp_dir(temp_dir.path().join("tmp")),
     );
-    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir
+        .path()
+        .to_path_buf()]));
 
     // Create trust store with require_approval enabled
     let mut trust_store = TrustStore::new(temp_dir.path().join("trust.json"));
@@ -627,7 +633,9 @@ async fn test_pending_approval_flow() {
         reason: Some("Testing pending approval".to_string()),
     });
 
-    let result = router.route(msg, &test_device_id(), Some(&public_key_bytes)).await;
+    let result = router
+        .route(msg, &test_device_id(), Some(&public_key_bytes))
+        .await;
     assert!(result.is_ok());
 
     // Should be rejected with "pending approval" message
@@ -656,12 +664,15 @@ async fn test_approval_to_trusted_transition() {
 
     let temp_dir = TempDir::new().unwrap();
     let session_manager = Arc::new(MockSessionManager::new());
-    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let browser_for_transfer =
+        daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
     let file_transfer = Arc::new(
         daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
             .with_temp_dir(temp_dir.path().join("tmp")),
     );
-    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir
+        .path()
+        .to_path_buf()]));
 
     // Create trust store with require_approval enabled
     let mut trust_store = TrustStore::new(temp_dir.path().join("trust.json"));
@@ -677,7 +688,9 @@ async fn test_approval_to_trusted_transition() {
     let identity = protocol::DeviceIdentity::generate();
     let device_id = *identity.device_id();
     let device_perms = daemon::files::DevicePermissions::allow_all_dangerous(device_id);
-    path_permissions.set_device_permissions(device_perms).unwrap();
+    path_permissions
+        .set_device_permissions(device_perms)
+        .unwrap();
 
     let router = MessageRouter::new(
         session_manager,
@@ -752,12 +765,15 @@ async fn test_session_access_requires_trust() {
 
     let temp_dir = TempDir::new().unwrap();
     let session_manager = Arc::new(MockSessionManager::new());
-    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let browser_for_transfer =
+        daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
     let file_transfer = Arc::new(
         daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
             .with_temp_dir(temp_dir.path().join("tmp")),
     );
-    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir
+        .path()
+        .to_path_buf()]));
     let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
     let path_permissions = Arc::new(daemon::files::PathPermissions::new(
         temp_dir.path().join("permissions.json"),
@@ -786,7 +802,9 @@ async fn test_session_access_requires_trust() {
 
     // Set up permissions
     let device_perms = daemon::files::DevicePermissions::allow_all_dangerous(device_id);
-    path_permissions.set_device_permissions(device_perms).unwrap();
+    path_permissions
+        .set_device_permissions(device_perms)
+        .unwrap();
 
     // Attempt session create - should fail (Unknown != Trusted)
     let msg = Message::SessionCreate(SessionCreate {
@@ -801,13 +819,19 @@ async fn test_session_access_requires_trust() {
     assert!(result.is_err());
     match result {
         Err(daemon::router::RouterError::Device(msg)) => {
-            assert!(msg.contains("pending"), "Expected 'pending' error, got: {}", msg);
+            assert!(
+                msg.contains("pending"),
+                "Expected 'pending' error, got: {}",
+                msg
+            );
         }
         _ => panic!("Expected RouterError::Device"),
     }
 
     // Trust the device
-    trust_store.set_trust_level(&device_id, TrustLevel::Trusted).unwrap();
+    trust_store
+        .set_trust_level(&device_id, TrustLevel::Trusted)
+        .unwrap();
 
     // Now session create should work
     let msg = Message::SessionCreate(SessionCreate {
@@ -838,12 +862,15 @@ async fn test_file_permission_enforcement() {
     std::fs::write(forbidden_dir.join("secret.txt"), "forbidden content").unwrap();
 
     let session_manager = Arc::new(MockSessionManager::new());
-    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let browser_for_transfer =
+        daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
     let file_transfer = Arc::new(
         daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
             .with_temp_dir(temp_dir.path().join("tmp")),
     );
-    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir
+        .path()
+        .to_path_buf()]));
     let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
     let path_permissions = Arc::new(daemon::files::PathPermissions::new(
         temp_dir.path().join("permissions.json"),
@@ -862,8 +889,12 @@ async fn test_file_permission_enforcement() {
 
     // Only allow access to "allowed" directory
     let mut device_perms = daemon::files::DevicePermissions::new(device_id);
-    device_perms.add_path(daemon::files::permissions::PathPermission::read_write(allowed_dir.clone()));
-    path_permissions.set_device_permissions(device_perms).unwrap();
+    device_perms.add_path(daemon::files::permissions::PathPermission::read_write(
+        allowed_dir.clone(),
+    ));
+    path_permissions
+        .set_device_permissions(device_perms)
+        .unwrap();
 
     let router = MessageRouter::new(
         session_manager,
@@ -896,7 +927,10 @@ async fn test_file_permission_enforcement() {
 
     let result = router.route(msg, &device_id, None).await;
     assert!(result.is_err());
-    assert!(matches!(result, Err(daemon::router::RouterError::Permission(_))));
+    assert!(matches!(
+        result,
+        Err(daemon::router::RouterError::Permission(_))
+    ));
 }
 
 /// Test that pending approval requests expire after timeout.
@@ -948,12 +982,15 @@ async fn test_public_key_mismatch_rejection() {
 
     let temp_dir = TempDir::new().unwrap();
     let session_manager = Arc::new(MockSessionManager::new());
-    let browser_for_transfer = daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
+    let browser_for_transfer =
+        daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]);
     let file_transfer = Arc::new(
         daemon::files::FileTransfer::new(browser_for_transfer, 100 * 1024 * 1024)
             .with_temp_dir(temp_dir.path().join("tmp")),
     );
-    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir.path().to_path_buf()]));
+    let directory_browser = Arc::new(daemon::files::DirectoryBrowser::new(vec![temp_dir
+        .path()
+        .to_path_buf()]));
     let trust_store = Arc::new(TrustStore::new(temp_dir.path().join("trust.json")));
     let path_permissions = Arc::new(daemon::files::PathPermissions::new(
         temp_dir.path().join("permissions.json"),
@@ -984,12 +1021,18 @@ async fn test_public_key_mismatch_rejection() {
     // Provide a DIFFERENT authenticated public key (simulating spoofing attempt)
     let different_key: [u8; 32] = [0xDE; 32];
 
-    let result = router.route(msg, &test_device_id(), Some(&different_key)).await;
+    let result = router
+        .route(msg, &test_device_id(), Some(&different_key))
+        .await;
     assert!(result.is_err());
 
     match result {
         Err(daemon::router::RouterError::Auth(msg)) => {
-            assert!(msg.contains("mismatch"), "Expected 'mismatch' error, got: {}", msg);
+            assert!(
+                msg.contains("mismatch"),
+                "Expected 'mismatch' error, got: {}",
+                msg
+            );
         }
         _ => panic!("Expected RouterError::Auth for public key mismatch"),
     }
