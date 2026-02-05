@@ -13,21 +13,52 @@ import { initializeAppLifecycle } from './lib/lifecycle/AppLifecycle';
 import { parsePairingData, isPairingExpired, isShortPairingCode, lookupPairingCode, type PairingData } from './lib/scanner/BarcodeScanner';
 import { setSignalingUrl } from './config';
 
+// Wrap lazy() with chunk-load-failure recovery: on stale chunk 404,
+// trigger a single page reload. Uses sessionStorage to prevent infinite loops.
+function lazyWithRetry<T extends Component<any>>(
+  importFn: () => Promise<{ default: T }>,
+) {
+  return lazy(() =>
+    importFn().catch((error: unknown) => {
+      const isChunkError =
+        error instanceof TypeError &&
+        (error.message.includes('dynamically imported module') ||
+          error.message.includes('Failed to fetch'));
+
+      if (!isChunkError) throw error;
+
+      const reloadKey = 'remoshell-chunk-reload';
+      if (!sessionStorage.getItem(reloadKey)) {
+        sessionStorage.setItem(reloadKey, '1');
+        window.location.reload();
+        return new Promise<never>(() => {});
+      }
+
+      sessionStorage.removeItem(reloadKey);
+      throw error;
+    })
+  );
+}
+
 // Lazy-loaded components for better initial load performance
 // XTermWrapper is a heavy dependency (xterm.js + WebGL addon)
-const XTermWrapper = lazy(() => import('./components/terminal/XTermWrapper'));
+const XTermWrapper = lazyWithRetry(() => import('./components/terminal/XTermWrapper'));
 import type { XTermWrapperHandle } from './components/terminal/XTermWrapper';
 
 // FileBrowser is only needed when viewing files
-const FileBrowser = lazy(() => import('./components/files/FileBrowser'));
+const FileBrowser = lazyWithRetry(() => import('./components/files/FileBrowser'));
 
 // FileTransferProgress shows download/upload progress
-const FileTransferProgress = lazy(() => import('./components/files/FileTransferProgress'));
+const FileTransferProgress = lazyWithRetry(() => import('./components/files/FileTransferProgress'));
 
 // DeviceList and PairingCodeInput are lighter but still lazy-loaded
-const DeviceList = lazy(() => import('./components/devices/DeviceList'));
-const PairingCodeInput = lazy(() => import('./components/pairing/PairingCodeInput'));
-const QRScanner = lazy(() => import('./components/pairing/QRScanner'));
+const DeviceList = lazyWithRetry(() => import('./components/devices/DeviceList'));
+const PairingCodeInput = lazyWithRetry(() => import('./components/pairing/PairingCodeInput'));
+const QRScanner = lazyWithRetry(() => import('./components/pairing/QRScanner'));
+
+// Module-level signal for peer code passed via ?peer= URL parameter.
+// Set in App.onMount, consumed in DevicesView.onMount.
+const [initialPeerCode, setInitialPeerCode] = createSignal<string | null>(null);
 
 /**
  * Loading fallback component for lazy-loaded views
@@ -287,18 +318,14 @@ const DevicesView: Component = () => {
   const [scannerKey, setScannerKey] = createSignal(0);
   const [customDeviceName, setCustomDeviceName] = createSignal('');
 
-  // Check for ?peer= URL parameter on mount
+  // Consume initialPeerCode set by App.onMount (from ?peer= URL or reload recovery)
   onMount(() => {
-    const params = new URLSearchParams(window.location.search);
-    const peerCode = params.get('peer');
-    if (peerCode && isShortPairingCode(peerCode)) {
+    const peerCode = initialPeerCode();
+    if (peerCode) {
+      setInitialPeerCode(null);
+      sessionStorage.removeItem('remoshell-pending-peer');
       setShowPairing(true);
-      // Auto-trigger pairing with the code
-      handlePairingComplete(peerCode.toUpperCase());
-      // Clean up URL (remove ?peer= param) without reload
-      const url = new URL(window.location.href);
-      url.searchParams.delete('peer');
-      window.history.replaceState({}, '', url.toString());
+      handlePairingComplete(peerCode);
     }
   });
 
@@ -557,6 +584,29 @@ const App: Component = () => {
 
   // Subscribe to store events for logging/debugging
   onMount(async () => {
+    // Clear chunk-reload flag on successful mount
+    sessionStorage.removeItem('remoshell-chunk-reload');
+
+    // Check for ?peer= URL parameter → switch to devices view
+    const params = new URLSearchParams(window.location.search);
+    const peerCode = params.get('peer');
+    if (peerCode && isShortPairingCode(peerCode)) {
+      const code = peerCode.toUpperCase();
+      setInitialPeerCode(code);
+      setActiveView('devices');
+      sessionStorage.setItem('remoshell-pending-peer', code);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('peer');
+      window.history.replaceState({}, '', url.toString());
+    }
+
+    // Also check sessionStorage for pending peer (chunk-reload recovery)
+    const pendingPeer = sessionStorage.getItem('remoshell-pending-peer');
+    if (pendingPeer && isShortPairingCode(pendingPeer)) {
+      setInitialPeerCode(pendingPeer);
+      setActiveView('devices');
+    }
+
     // Initialize app lifecycle and connection orchestrator
     try {
       // Initialize lifecycle management (handles foreground/background)
