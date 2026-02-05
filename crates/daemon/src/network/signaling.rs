@@ -417,6 +417,7 @@ impl WebSocketSignalingClient {
                 }
             }
             IncomingMessage::Offer { peer_id, data } => {
+                tracing::info!(from_peer_id = %peer_id, sdp_len = data.sdp.len(), "Dispatching OfferReceived event");
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::OfferReceived {
@@ -425,7 +426,7 @@ impl WebSocketSignalingClient {
                     })
                     .await
                 {
-                    tracing::warn!(error = %e, "Failed to send OfferReceived event - receiver may be dropped");
+                    tracing::error!(error = %e, "Failed to send OfferReceived event - receiver may be dropped");
                 }
             }
             IncomingMessage::Answer { peer_id, data } => {
@@ -689,6 +690,14 @@ impl WebSocketSignalingClient {
             while let Some(result) = ws_stream.next().await {
                 match result {
                     Ok(WsMessage::Text(text)) => {
+                        // Log raw message (truncate long SDPs for readability)
+                        let preview = if text.len() > 200 {
+                            format!("{}...[truncated, {} bytes total]", &text[..200], text.len())
+                        } else {
+                            text.clone()
+                        };
+                        tracing::info!("Signaling recv: {}", preview);
+
                         match serde_json::from_str::<IncomingMessage>(&text) {
                             Ok(msg) => {
                                 if incoming_tx.send(Ok(msg)).await.is_err() {
@@ -696,8 +705,8 @@ impl WebSocketSignalingClient {
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!(
-                                    "failed to parse signaling message: {} (raw: {})",
+                                tracing::error!(
+                                    "Failed to deserialize signaling message: {} (raw: {})",
                                     e,
                                     text
                                 );
