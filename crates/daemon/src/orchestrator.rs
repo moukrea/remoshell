@@ -529,6 +529,11 @@ impl DaemonOrchestrator {
         conns.insert(device_id.clone(), connection);
         drop(conns); // Release lock before spawning task
 
+        // Notify subscribers that a peer connected
+        let _ = event_tx.send(OrchestratorEvent::PeerConnected {
+            device_id: device_id.clone(),
+        });
+
         // Spawn a task to handle messages from this connection
         let connections_for_handler = Arc::clone(connections);
         let router_for_handler = Arc::clone(router);
@@ -1075,6 +1080,11 @@ impl DaemonOrchestrator {
         self.connections.read().await.len()
     }
 
+    /// Returns a shared reference to the active connections map.
+    pub fn connections(&self) -> Arc<RwLock<std::collections::HashMap<String, ActiveConnection>>> {
+        Arc::clone(&self.connections)
+    }
+
     /// Returns the shutdown token for external tasks to observe shutdown.
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown_token.clone()
@@ -1088,6 +1098,16 @@ impl DaemonOrchestrator {
     /// Returns the file transfer handler for upload/download operations.
     pub fn file_transfer(&self) -> &Arc<FileTransfer> {
         &self.file_transfer
+    }
+
+    /// Returns the device identity.
+    pub fn identity(&self) -> &DeviceIdentity {
+        &self.identity
+    }
+
+    /// Returns the signaling URL.
+    pub fn signaling_url(&self) -> &str {
+        &self.config.network.signaling_url
     }
 }
 

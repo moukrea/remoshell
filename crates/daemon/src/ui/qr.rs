@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// Encodes bytes as a base58 string.
 ///
 /// Uses Bitcoin-style base58 alphabet (no 0, O, I, l).
-fn to_base58(bytes: &[u8]) -> String {
+pub fn to_base58(bytes: &[u8]) -> String {
     const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
     if bytes.is_empty() {
@@ -53,7 +53,7 @@ fn to_base58(bytes: &[u8]) -> String {
 /// Decodes a base58 string to bytes.
 ///
 /// Uses Bitcoin-style base58 alphabet (no 0, O, I, l).
-fn from_base58(s: &str) -> Result<Vec<u8>, &'static str> {
+pub fn from_base58(s: &str) -> Result<Vec<u8>, &'static str> {
     const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
     if s.is_empty() {
@@ -354,6 +354,22 @@ pub fn generate_terminal_qr_inverted(info: &PairingInfo) -> anyhow::Result<Strin
     Ok(output)
 }
 
+/// Returns the raw QR code module grid for custom rendering.
+///
+/// Returns `(modules, width)` where `modules[row * width + col]` is `true`
+/// for dark modules and `false` for light. QR codes are square so height == width.
+pub fn generate_qr_modules(info: &PairingInfo) -> anyhow::Result<(Vec<bool>, usize)> {
+    let json = info.to_json()?;
+    let code = QrCode::new(json.as_bytes())?;
+    let width = code.width();
+    let modules: Vec<bool> = code
+        .to_colors()
+        .into_iter()
+        .map(|c| c == qrcode::Color::Dark)
+        .collect();
+    Ok((modules, width))
+}
+
 /// Generates a PNG QR code and saves it to the specified path.
 ///
 /// # Arguments
@@ -459,6 +475,167 @@ pub fn generate_png_qr_bytes(info: &PairingInfo) -> anyhow::Result<Vec<u8>> {
     img.write_to(&mut cursor, image::ImageFormat::Png)?;
 
     Ok(bytes)
+}
+
+/// Generates a random pairing code in `XXXX-XXXX` format.
+///
+/// Characters are drawn from `[A-Z0-9]` (36 characters).
+pub fn generate_pairing_code() -> String {
+    use rand::Rng;
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::thread_rng();
+    let part1: String = (0..4)
+        .map(|_| CHARS[rng.gen_range(0..36)] as char)
+        .collect();
+    let part2: String = (0..4)
+        .map(|_| CHARS[rng.gen_range(0..36)] as char)
+        .collect();
+    format!("{}-{}", part1, part2)
+}
+
+/// Builds a pairing URL by appending the code as a `?peer=` query parameter.
+pub fn pairing_url(web_app_base: &str, code: &str) -> String {
+    let base = web_app_base.trim_end_matches('/');
+    format!("{}/?peer={}", base, code)
+}
+
+/// Returns the raw QR code module grid for arbitrary data.
+///
+/// Returns `(modules, width)` where `modules[row * width + col]` is `true`
+/// for dark modules and `false` for light. QR codes are square so height == width.
+pub fn generate_qr_modules_from_data(data: &[u8]) -> anyhow::Result<(Vec<bool>, usize)> {
+    let code = QrCode::new(data)?;
+    let width = code.width();
+    let modules: Vec<bool> = code
+        .to_colors()
+        .into_iter()
+        .map(|c| c == qrcode::Color::Dark)
+        .collect();
+    Ok((modules, width))
+}
+
+/// Registers a pairing code with the signaling server via HTTP POST.
+///
+/// Derives the HTTPS URL from the WSS signaling URL, then POSTs
+/// `{ code, info, ttl }` to `/pair`.
+pub async fn register_pairing_code(
+    signaling_url: &str,
+    code: &str,
+    info: &PairingInfo,
+) -> anyhow::Result<()> {
+    let http_url = signaling_url_to_http(signaling_url);
+    let url = format!("{}/pair", http_url.trim_end_matches('/'));
+
+    let body = serde_json::json!({
+        "code": code,
+        "info": info,
+        "ttl": info.seconds_until_expiry(),
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Registration failed ({}): {}", status, text);
+    }
+
+    Ok(())
+}
+
+/// Converts a WebSocket URL (wss:// or ws://) to its HTTP equivalent.
+pub fn signaling_url_to_http(signaling_url: &str) -> String {
+    signaling_url
+        .replace("wss://", "https://")
+        .replace("ws://", "http://")
+}
+
+/// Generates a terminal-displayable QR code from arbitrary data (e.g., a URL string).
+pub fn generate_terminal_qr_from_data(data: &[u8]) -> anyhow::Result<String> {
+    let code = QrCode::new(data)?;
+    let modules = code.to_colors();
+    let width = code.width();
+
+    let mut output = String::new();
+    let full_width = width + 8;
+    for _ in 0..4 {
+        output.push_str(&" ".repeat(full_width));
+        output.push('\n');
+    }
+
+    let height = modules.len() / width;
+    let mut row = 0;
+    while row < height {
+        output.push_str("    ");
+        for col in 0..width {
+            let top_dark = modules[row * width + col] == qrcode::Color::Dark;
+            let bottom_dark = if row + 1 < height {
+                modules[(row + 1) * width + col] == qrcode::Color::Dark
+            } else {
+                false
+            };
+            let ch = match (top_dark, bottom_dark) {
+                (true, true) => '\u{2588}',
+                (true, false) => '\u{2580}',
+                (false, true) => '\u{2584}',
+                (false, false) => ' ',
+            };
+            output.push(ch);
+        }
+        output.push_str("    ");
+        output.push('\n');
+        row += 2;
+    }
+
+    for _ in 0..4 {
+        output.push_str(&" ".repeat(full_width));
+        output.push('\n');
+    }
+
+    Ok(output)
+}
+
+/// Generates a PNG QR code from arbitrary data and saves it to the specified path.
+pub fn generate_png_qr_from_data(data: &[u8], path: &Path) -> anyhow::Result<()> {
+    let code = QrCode::new(data)?;
+    let modules = code.to_colors();
+    let qr_width = code.width();
+
+    let quiet_zone_pixels = PNG_QUIET_ZONE * PNG_MODULE_SIZE;
+    let qr_pixels = qr_width as u32 * PNG_MODULE_SIZE;
+    let image_size = qr_pixels + 2 * quiet_zone_pixels;
+
+    let mut img: ImageBuffer<Luma<u8>, Vec<u8>> =
+        ImageBuffer::from_pixel(image_size, image_size, Luma([255u8]));
+
+    for (idx, color) in modules.iter().enumerate() {
+        let row = (idx / qr_width) as u32;
+        let col = (idx % qr_width) as u32;
+
+        let pixel_color = if *color == qrcode::Color::Dark {
+            Luma([0u8])
+        } else {
+            Luma([255u8])
+        };
+
+        let x_start = quiet_zone_pixels + col * PNG_MODULE_SIZE;
+        let y_start = quiet_zone_pixels + row * PNG_MODULE_SIZE;
+
+        for dy in 0..PNG_MODULE_SIZE {
+            for dx in 0..PNG_MODULE_SIZE {
+                img.put_pixel(x_start + dx, y_start + dy, pixel_color);
+            }
+        }
+    }
+
+    img.save(path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -750,6 +927,99 @@ mod tests {
             .device_id_bytes()
             .expect("Failed to parse device ID from base58");
         assert_eq!(&device_id_bytes[..], identity.device_id().as_bytes());
+    }
+
+    #[test]
+    fn test_generate_qr_modules() {
+        let public_key = [1u8; 32];
+        let info = PairingInfo::new(
+            "TestDevice".to_string(),
+            &public_key,
+            "wss://relay.example.com".to_string(),
+            Some(300),
+        );
+        let (modules, width) = generate_qr_modules(&info).expect("Failed to generate QR modules");
+        assert_eq!(modules.len(), width * width);
+        assert!(width >= 21);
+        assert!(modules.iter().any(|&m| m));
+        assert!(modules.iter().any(|&m| !m));
+    }
+
+    #[test]
+    fn test_generate_pairing_code_format() {
+        let code = generate_pairing_code();
+        let parts: Vec<&str> = code.split('-').collect();
+        assert_eq!(
+            parts.len(),
+            2,
+            "Code should have two parts separated by '-'"
+        );
+        assert_eq!(parts[0].len(), 4, "First part should be 4 chars");
+        assert_eq!(parts[1].len(), 4, "Second part should be 4 chars");
+        for c in code.chars() {
+            assert!(
+                c == '-' || c.is_ascii_uppercase() || c.is_ascii_digit(),
+                "Character '{}' should be A-Z, 0-9, or '-'",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_pairing_code_randomness() {
+        let code1 = generate_pairing_code();
+        let code2 = generate_pairing_code();
+        // Extremely unlikely to generate the same code twice
+        assert_ne!(code1, code2, "Two consecutive codes should be different");
+    }
+
+    #[test]
+    fn test_pairing_url_basic() {
+        let url = pairing_url("https://moukrea.github.io/remoshell/", "AXBK-7392");
+        assert_eq!(url, "https://moukrea.github.io/remoshell/?peer=AXBK-7392");
+    }
+
+    #[test]
+    fn test_pairing_url_without_trailing_slash() {
+        let url = pairing_url("https://moukrea.github.io/remoshell", "AXBK-7392");
+        assert_eq!(url, "https://moukrea.github.io/remoshell/?peer=AXBK-7392");
+    }
+
+    #[test]
+    fn test_generate_qr_modules_from_data() {
+        let url = "https://moukrea.github.io/remoshell/?peer=AXBK-7392";
+        let (modules, width) =
+            generate_qr_modules_from_data(url.as_bytes()).expect("QR generation should succeed");
+        assert_eq!(modules.len(), width * width);
+        assert!(width >= 21);
+        assert!(modules.iter().any(|&m| m));
+        assert!(modules.iter().any(|&m| !m));
+    }
+
+    #[test]
+    fn test_signaling_url_to_http_wss() {
+        assert_eq!(
+            signaling_url_to_http("wss://example.com"),
+            "https://example.com"
+        );
+    }
+
+    #[test]
+    fn test_signaling_url_to_http_ws() {
+        assert_eq!(
+            signaling_url_to_http("ws://localhost:8787"),
+            "http://localhost:8787"
+        );
+    }
+
+    #[test]
+    fn test_generate_terminal_qr_from_data() {
+        let url = "https://moukrea.github.io/remoshell/?peer=TEST-1234";
+        let qr =
+            generate_terminal_qr_from_data(url.as_bytes()).expect("QR generation should succeed");
+        assert!(!qr.is_empty());
+        let lines: Vec<&str> = qr.lines().collect();
+        assert!(lines.len() > 10);
     }
 
     #[test]

@@ -20,7 +20,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs},
     Frame, Terminal,
 };
 use tokio::sync::mpsc;
@@ -84,6 +84,8 @@ pub enum TuiEvent {
         sessions_active: usize,
         uptime_secs: u64,
     },
+    /// Pairing code registration with the signaling server failed.
+    PairingRegistrationFailed { error: String },
     /// Force a UI refresh.
     Refresh,
     /// Shutdown the TUI.
@@ -253,6 +255,29 @@ pub struct DaemonStats {
     pub uptime_secs: u64,
 }
 
+/// Configuration for generating pairing codes on demand.
+#[derive(Debug, Clone)]
+pub struct PairingConfig {
+    /// Raw device ID bytes (16 bytes).
+    pub device_id_bytes: [u8; 16],
+    /// Ed25519 public key bytes (32 bytes).
+    pub public_key_bytes: [u8; 32],
+    /// Relay/signaling server URL.
+    pub relay_url: String,
+}
+
+/// State of the pairing overlay modal.
+#[derive(Debug, Clone)]
+enum PairingOverlay {
+    Hidden,
+    Showing {
+        pairing_info: super::qr::PairingInfo,
+        qr_modules: Vec<bool>,
+        qr_width: usize,
+        pairing_code: String,
+    },
+}
+
 /// The main TUI application.
 pub struct TuiApp {
     /// The terminal backend.
@@ -283,13 +308,19 @@ pub struct TuiApp {
     approval_tx: mpsc::Sender<ApprovalResult>,
     /// Receiver for approval results (kept for handing off to daemon).
     approval_rx: Option<mpsc::Receiver<ApprovalResult>>,
+    /// Configuration for generating pairing codes.
+    pairing_config: Option<PairingConfig>,
+    /// Current state of the pairing overlay.
+    pairing_overlay: PairingOverlay,
 }
 
 impl TuiApp {
     /// Creates a new TUI application.
     ///
     /// Returns the TuiApp and a sender for sending events to it.
-    pub fn new() -> io::Result<(Self, mpsc::Sender<TuiEvent>)> {
+    pub fn new(
+        pairing_config: Option<PairingConfig>,
+    ) -> io::Result<(Self, mpsc::Sender<TuiEvent>)> {
         // Set up terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -323,6 +354,8 @@ impl TuiApp {
                 always_trust: false,
                 approval_tx,
                 approval_rx: Some(approval_rx),
+                pairing_config,
+                pairing_overlay: PairingOverlay::Hidden,
             },
             tx_clone,
         ))
@@ -361,6 +394,8 @@ impl TuiApp {
                 always_trust: false,
                 approval_tx,
                 approval_rx: Some(approval_rx),
+                pairing_config: None,
+                pairing_overlay: PairingOverlay::Hidden,
             },
             tx_clone,
         ))
@@ -464,6 +499,16 @@ impl TuiApp {
 
     /// Handles a keyboard event.
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // If pairing overlay is active, only handle overlay keys
+        if self.is_pairing_overlay_visible() {
+            match key.code {
+                KeyCode::Esc => self.hide_pairing_overlay(),
+                KeyCode::Char('p') | KeyCode::Char('P') => self.show_pairing_overlay(),
+                _ => {}
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.should_quit = true;
@@ -504,6 +549,11 @@ impl TuiApp {
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 if self.current_tab == Tab::Approvals {
                     self.toggle_always_trust();
+                }
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                if self.current_tab == Tab::Devices {
+                    self.show_pairing_overlay();
                 }
             }
             _ => {}
@@ -601,6 +651,71 @@ impl TuiApp {
         }
     }
 
+    /// Shows the pairing overlay with a fresh pairing code.
+    fn show_pairing_overlay(&mut self) {
+        let Some(config) = &self.pairing_config else {
+            return;
+        };
+
+        let pairing_info = super::qr::PairingInfo::new(
+            super::qr::to_base58(&config.device_id_bytes),
+            &config.public_key_bytes,
+            config.relay_url.clone(),
+            None, // default 5 min expiry
+        );
+
+        // Generate a short pairing code
+        let pairing_code = super::qr::generate_pairing_code();
+
+        // Build URL for QR code
+        let url = super::qr::pairing_url(crate::config::DEFAULT_WEB_APP_URL, &pairing_code);
+
+        // Generate QR modules from the URL (not raw JSON)
+        let (qr_modules, qr_width) = match super::qr::generate_qr_modules_from_data(url.as_bytes())
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("QR generation failed: {}", e);
+                return;
+            }
+        };
+
+        self.pairing_overlay = PairingOverlay::Showing {
+            pairing_info: pairing_info.clone(),
+            qr_modules,
+            qr_width,
+            pairing_code: pairing_code.clone(),
+        };
+
+        // Register the pairing code with the signaling server in the background
+        let signaling_url = config.relay_url.clone();
+        let code = pairing_code;
+        let info = pairing_info;
+        let tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = super::qr::register_pairing_code(&signaling_url, &code, &info).await {
+                tracing::warn!("Failed to register pairing code: {}", e);
+                let _ = tx
+                    .send(TuiEvent::PairingRegistrationFailed {
+                        error: e.to_string(),
+                    })
+                    .await;
+            } else {
+                tracing::info!("Pairing code {} registered successfully", code);
+            }
+        });
+    }
+
+    /// Hides the pairing overlay.
+    fn hide_pairing_overlay(&mut self) {
+        self.pairing_overlay = PairingOverlay::Hidden;
+    }
+
+    /// Returns whether the pairing overlay is currently visible.
+    fn is_pairing_overlay_visible(&self) -> bool {
+        matches!(self.pairing_overlay, PairingOverlay::Showing { .. })
+    }
+
     /// Processes a TUI event.
     pub fn handle_event(&mut self, event: TuiEvent) {
         match event {
@@ -667,6 +782,9 @@ impl TuiApp {
                 self.stats.sessions_active = sessions_active;
                 self.stats.uptime_secs = uptime_secs;
             }
+            TuiEvent::PairingRegistrationFailed { error } => {
+                tracing::warn!("Pairing registration failed: {}", error);
+            }
             TuiEvent::Refresh => {
                 // Just trigger a redraw
             }
@@ -699,6 +817,7 @@ impl TuiApp {
         let approvals = self.approvals.clone();
         let always_trust = self.always_trust;
         let mut list_state = self.list_state.clone();
+        let pairing_overlay = self.pairing_overlay.clone();
 
         self.terminal.draw(|frame| {
             Self::render_frame(
@@ -710,6 +829,7 @@ impl TuiApp {
                 &approvals,
                 always_trust,
                 &mut list_state,
+                &pairing_overlay,
             );
         })?;
 
@@ -728,6 +848,7 @@ impl TuiApp {
         approvals: &[ApprovalInfo],
         always_trust: bool,
         list_state: &mut ListState,
+        pairing_overlay: &PairingOverlay,
     ) {
         let size = frame.area();
 
@@ -755,7 +876,25 @@ impl TuiApp {
         }
 
         // Render status bar
-        Self::render_status_bar(frame, chunks[2], stats);
+        Self::render_status_bar(frame, chunks[2], stats, current_tab);
+
+        // Render pairing overlay on top if visible
+        if let PairingOverlay::Showing {
+            ref pairing_info,
+            ref qr_modules,
+            qr_width,
+            ref pairing_code,
+        } = *pairing_overlay
+        {
+            Self::render_pairing_overlay(
+                frame,
+                frame.area(),
+                pairing_info,
+                qr_modules,
+                qr_width,
+                pairing_code,
+            );
+        }
     }
 
     /// Renders the tab bar.
@@ -1266,10 +1405,10 @@ impl TuiApp {
     }
 
     /// Renders the status bar at the bottom.
-    fn render_status_bar(frame: &mut Frame, area: Rect, stats: &DaemonStats) {
+    fn render_status_bar(frame: &mut Frame, area: Rect, stats: &DaemonStats, current_tab: Tab) {
         let uptime = format_duration(stats.uptime_secs);
 
-        let status_text = Line::from(vec![
+        let mut spans = vec![
             Span::styled(" Devices: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 stats.devices_connected.to_string(),
@@ -1282,17 +1421,131 @@ impl TuiApp {
             ),
             Span::styled(" | Uptime: ", Style::default().fg(Color::Gray)),
             Span::styled(uptime, Style::default().fg(Color::Cyan)),
-            Span::styled(
-                " | Press 'q' to quit ",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]);
+            Span::styled(" | Press 'q' to quit", Style::default().fg(Color::DarkGray)),
+        ];
+
+        // Add tab-specific hints
+        match current_tab {
+            Tab::Devices => {
+                spans.push(Span::styled(
+                    " | 'p' to pair",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            Tab::Approvals => {
+                spans.push(Span::styled(
+                    " | 'a'ccept 'r'eject 't'rust",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            _ => {}
+        }
+
+        let status_text = Line::from(spans);
 
         let paragraph = Paragraph::new(status_text)
             .block(Block::default().borders(Borders::ALL))
             .style(Style::default().fg(Color::White));
 
         frame.render_widget(paragraph, area);
+    }
+
+    /// Renders the pairing overlay modal.
+    fn render_pairing_overlay(
+        frame: &mut Frame,
+        area: Rect,
+        pairing_info: &super::qr::PairingInfo,
+        qr_modules: &[bool],
+        qr_width: usize,
+        pairing_code: &str,
+    ) {
+        let quiet_zone: usize = 4;
+        let qr_height = if qr_width > 0 {
+            qr_modules.len() / qr_width
+        } else {
+            0
+        };
+        let full_w = qr_width + 2 * quiet_zone;
+        let full_h = qr_height + 2 * quiet_zone;
+        let qr_rows = full_h.div_ceil(2) as u16; // terminal rows (2 QR rows per terminal row)
+
+        // content: qr_rows + 1 (separator) + 1 (code) + 1 (instruction) + 1 (expiry) + 1 (separator) + 1 (help)
+        let content_h = qr_rows + 6;
+        let modal_h = (content_h + 2).min(area.height.saturating_sub(2)); // +2 for border
+        let modal_w = (full_w as u16 + 2)
+            .max(46)
+            .min(area.width.saturating_sub(2));
+
+        let x = area.x + (area.width.saturating_sub(modal_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(modal_h)) / 2;
+        let modal_rect = Rect::new(x, y, modal_w, modal_h);
+
+        frame.render_widget(Clear, modal_rect);
+
+        let mut lines: Vec<Line> = Vec::new();
+
+        // QR code with per-cell colors
+        lines.extend(build_qr_lines(qr_modules, qr_width, quiet_zone));
+
+        // Separator
+        lines.push(Line::from(""));
+
+        // Pairing code displayed prominently
+        lines.push(Line::from(vec![
+            Span::styled("Code: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                pairing_code,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        // Instruction
+        lines.push(Line::from(Span::styled(
+            "Scan QR or enter code in the app",
+            Style::default().fg(Color::Gray),
+        )));
+
+        // Expiry countdown
+        let remaining = pairing_info.seconds_until_expiry();
+        if remaining == 0 {
+            lines.push(Line::from(Span::styled(
+                "Expired - press 'p' to regenerate",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )));
+        } else {
+            let m = remaining / 60;
+            let s = remaining % 60;
+            let color = if remaining > 120 {
+                Color::Green
+            } else if remaining > 30 {
+                Color::Yellow
+            } else {
+                Color::Red
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Expires in ", Style::default().fg(Color::Gray)),
+                Span::styled(format!("{}:{:02}", m, s), Style::default().fg(color)),
+            ]));
+        }
+
+        // Separator + help
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Press Esc to close, p to regenerate",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Pair New Device ")
+                .border_style(Style::default().fg(Color::Cyan))
+                .style(Style::default().bg(Color::Reset)),
+        );
+
+        frame.render_widget(paragraph, modal_rect);
     }
 
     /// Runs the main event loop.
@@ -1359,6 +1612,49 @@ impl Drop for TuiApp {
         );
         let _ = self.terminal.show_cursor();
     }
+}
+
+/// Builds ratatui Lines from raw QR module data with explicit per-cell colors.
+///
+/// Uses upper half block (▀) with fg=top_row_color, bg=bottom_row_color.
+/// Dark modules -> Color::Black, light modules / quiet zone -> Color::White.
+fn build_qr_lines(modules: &[bool], width: usize, quiet_zone: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let height = modules.len() / width;
+    let full_w = width + 2 * quiet_zone;
+    let full_h = height + 2 * quiet_zone;
+
+    let is_dark = |row: usize, col: usize| -> bool {
+        if row < quiet_zone || row >= quiet_zone + height {
+            return false;
+        }
+        if col < quiet_zone || col >= quiet_zone + width {
+            return false;
+        }
+        modules[(row - quiet_zone) * width + (col - quiet_zone)]
+    };
+
+    let mut lines = Vec::new();
+    let mut row = 0;
+    while row < full_h {
+        let mut spans = Vec::with_capacity(full_w);
+        for col in 0..full_w {
+            let top = is_dark(row, col);
+            let bot = if row + 1 < full_h {
+                is_dark(row + 1, col)
+            } else {
+                false
+            };
+            let fg = if top { Color::Black } else { Color::White };
+            let bg = if bot { Color::Black } else { Color::White };
+            spans.push(Span::styled("\u{2580}", Style::default().fg(fg).bg(bg)));
+        }
+        lines.push(Line::from(spans));
+        row += 2;
+    }
+    lines
 }
 
 /// Formats a duration in seconds to a human-readable string.
@@ -1618,6 +1914,9 @@ mod tests {
             devices_connected: 5,
             sessions_active: 3,
             uptime_secs: 1000,
+        };
+        let _ = TuiEvent::PairingRegistrationFailed {
+            error: "test error".to_string(),
         };
         let _ = TuiEvent::Refresh;
         let _ = TuiEvent::Shutdown;

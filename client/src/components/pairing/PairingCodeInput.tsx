@@ -1,7 +1,7 @@
 import { Component, createSignal, createEffect, For, onMount } from 'solid-js';
 
-/** Default segment pattern: XXX-XXXX (3 chars, hyphen, 4 chars) */
-const DEFAULT_SEGMENT_LENGTHS = [3, 4];
+/** Default segment pattern: XXXX-XXXX (4 chars, hyphen, 4 chars) */
+const DEFAULT_SEGMENT_LENGTHS = [4, 4];
 
 /** Valid characters for pairing codes (alphanumeric, uppercase) */
 const VALID_CHARS_REGEX = /^[A-Z0-9]$/;

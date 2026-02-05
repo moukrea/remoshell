@@ -111,7 +111,7 @@ export interface PairingData {
  */
 export type PairingParseResult =
   | { success: true; data: PairingData }
-  | { success: false; error: string };
+  | { success: false; error: string; shortCode?: string };
 
 // ============================================================================
 // Pairing Data Parsing
@@ -123,9 +123,60 @@ export type PairingParseResult =
  * - remoshell://connect/<base58-encoded-data>
  * - rs://<base58-encoded-data>
  * - Raw base58 encoded data
+ * - Web app URL with ?peer=XXXX-XXXX parameter
+ * - Short pairing code XXXX-XXXX
  */
 const REMOSHELL_URL_PREFIX = 'remoshell://connect/';
 const SHORT_URL_PREFIX = 'rs://';
+
+/** Pattern to extract peer code from web app URL */
+const WEB_APP_URL_PATTERN = /[?&]peer=([A-Z0-9]+-[A-Z0-9]+)/i;
+
+/**
+ * Check if a string is a short pairing code (XXXX-XXXX format)
+ */
+export function isShortPairingCode(s: string): boolean {
+  return /^[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(s.trim());
+}
+
+/**
+ * Look up a short pairing code from the signaling server
+ */
+export async function lookupPairingCode(code: string): Promise<PairingParseResult> {
+  const { getConfig } = await import('../../config');
+  const httpUrl = getConfig().signalingUrl
+    .replace('wss://', 'https://')
+    .replace('ws://', 'http://');
+  const url = `${httpUrl}/pair/${encodeURIComponent(code)}`;
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      if (resp.status === 404) return { success: false, error: 'Pairing code not found or expired' };
+      return { success: false, error: `Lookup failed (${resp.status})` };
+    }
+
+    const data = await resp.json();
+    if (!data.device_id || !data.public_key || !data.relay_url || typeof data.expires !== 'number') {
+      return { success: false, error: 'Invalid pairing data from server' };
+    }
+
+    return {
+      success: true,
+      data: {
+        device_id: data.device_id,
+        public_key: data.public_key,
+        relay_url: data.relay_url,
+        expires: data.expires,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Network error during code lookup',
+    };
+  }
+}
 
 /**
  * Base58 character set (Bitcoin style)
@@ -223,6 +274,18 @@ export function parsePairingData(qrContent: string): PairingParseResult {
 
   const trimmed = qrContent.trim();
   let jsonString: string;
+
+  // Web app URL format: https://moukrea.github.io/remoshell/?peer=XXXX-XXXX
+  const peerMatch = trimmed.match(WEB_APP_URL_PATTERN);
+  if (peerMatch) {
+    const shortCode = peerMatch[1].toUpperCase();
+    return { success: false, error: 'SHORT_CODE', shortCode };
+  }
+
+  // Short pairing code format: XXXX-XXXX entered manually
+  if (isShortPairingCode(trimmed)) {
+    return { success: false, error: 'SHORT_CODE', shortCode: trimmed.toUpperCase() };
+  }
 
   // Try to determine the format
   if (trimmed.startsWith(REMOSHELL_URL_PREFIX)) {

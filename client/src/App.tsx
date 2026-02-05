@@ -10,7 +10,7 @@ import { OfflineIndicator } from './components/offline';
 import { ToastContainer } from './components/notifications';
 import { getOrchestrator } from './lib/orchestration/ConnectionOrchestrator';
 import { initializeAppLifecycle } from './lib/lifecycle/AppLifecycle';
-import { parsePairingData, isPairingExpired } from './lib/scanner/BarcodeScanner';
+import { parsePairingData, isPairingExpired, isShortPairingCode, lookupPairingCode, type PairingData } from './lib/scanner/BarcodeScanner';
 import { setSignalingUrl } from './config';
 
 // Lazy-loaded components for better initial load performance
@@ -287,6 +287,21 @@ const DevicesView: Component = () => {
   const [scannerKey, setScannerKey] = createSignal(0);
   const [customDeviceName, setCustomDeviceName] = createSignal('');
 
+  // Check for ?peer= URL parameter on mount
+  onMount(() => {
+    const params = new URLSearchParams(window.location.search);
+    const peerCode = params.get('peer');
+    if (peerCode && isShortPairingCode(peerCode)) {
+      setShowPairing(true);
+      // Auto-trigger pairing with the code
+      handlePairingComplete(peerCode.toUpperCase());
+      // Clean up URL (remove ?peer= param) without reload
+      const url = new URL(window.location.href);
+      url.searchParams.delete('peer');
+      window.history.replaceState({}, '', url.toString());
+    }
+  });
+
   // Helper to get device name (custom or auto-generated)
   const getDeviceName = (deviceId: string): string => {
     const custom = customDeviceName().trim();
@@ -312,15 +327,37 @@ const DevicesView: Component = () => {
       // Clear any previous error
       setPairingError(null);
 
-      // Parse the pairing code (can be raw JSON or base58 encoded)
+      let pairingData: PairingData;
+
+      // Try parsing directly first (legacy formats, JSON, base58)
       const parseResult = parsePairingData(code);
-      if (!parseResult.success) {
+      if (parseResult.success) {
+        pairingData = parseResult.data;
+      } else if (parseResult.shortCode) {
+        // Short code detected (from URL or direct input) — look up from signaling server
+        console.log('[Pairing] Looking up short code:', parseResult.shortCode);
+        const lookupResult = await lookupPairingCode(parseResult.shortCode);
+        if (!lookupResult.success) {
+          setPairingError(lookupResult.error);
+          console.error('[Pairing] Short code lookup failed:', lookupResult.error);
+          return;
+        }
+        pairingData = lookupResult.data;
+      } else if (isShortPairingCode(code)) {
+        // Direct short code input (e.g., from PairingCodeInput)
+        console.log('[Pairing] Looking up direct short code:', code);
+        const lookupResult = await lookupPairingCode(code.toUpperCase());
+        if (!lookupResult.success) {
+          setPairingError(lookupResult.error);
+          console.error('[Pairing] Short code lookup failed:', lookupResult.error);
+          return;
+        }
+        pairingData = lookupResult.data;
+      } else {
         setPairingError(parseResult.error);
         console.error('[Pairing] Parse failed:', parseResult.error);
         return;
       }
-
-      const pairingData = parseResult.data;
 
       // Validate expiry
       if (isPairingExpired(pairingData)) {

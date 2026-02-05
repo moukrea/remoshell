@@ -11,6 +11,8 @@ import {
   isPairingExpired,
   secondsUntilExpiry,
   createPairingQRContent,
+  isShortPairingCode,
+  lookupPairingCode,
   type PairingData,
 } from '../lib/scanner/BarcodeScanner';
 import { createMockSignalingClient, createMockWebRTCManager, type MockSignalingClient, type MockWebRTCManager } from '../lib/orchestration/__tests__/mocks';
@@ -810,6 +812,210 @@ describe('Pairing Flow Integration', () => {
 
         expect(orchestrator.getState()).toBe('disconnected');
       }
+    });
+  });
+
+  describe('Short Pairing Code', () => {
+    describe('isShortPairingCode', () => {
+      it('should accept valid XXXX-XXXX format', () => {
+        expect(isShortPairingCode('AXBK-7392')).toBe(true);
+      });
+
+      it('should accept lowercase input (case insensitive)', () => {
+        expect(isShortPairingCode('axbk-7392')).toBe(true);
+      });
+
+      it('should accept mixed case input', () => {
+        expect(isShortPairingCode('AxBk-73g2')).toBe(true);
+      });
+
+      it('should accept all-numeric code', () => {
+        expect(isShortPairingCode('1234-5678')).toBe(true);
+      });
+
+      it('should accept all-alpha code', () => {
+        expect(isShortPairingCode('ABCD-EFGH')).toBe(true);
+      });
+
+      it('should reject too-short code', () => {
+        expect(isShortPairingCode('ABC-1234')).toBe(false);
+      });
+
+      it('should reject too-long code', () => {
+        expect(isShortPairingCode('ABCDE-1234')).toBe(false);
+      });
+
+      it('should reject code without separator', () => {
+        expect(isShortPairingCode('ABCD1234')).toBe(false);
+      });
+
+      it('should reject arbitrary short string', () => {
+        expect(isShortPairingCode('abc')).toBe(false);
+      });
+
+      it('should reject empty string', () => {
+        expect(isShortPairingCode('')).toBe(false);
+      });
+
+      it('should handle whitespace trimming', () => {
+        expect(isShortPairingCode('  AXBK-7392  ')).toBe(true);
+      });
+    });
+
+    describe('parsePairingData with web app URL', () => {
+      it('should extract short code from web app URL', () => {
+        const result = parsePairingData('https://moukrea.github.io/remoshell/?peer=AXBK-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.shortCode).toBe('AXBK-7392');
+          expect(result.error).toBe('SHORT_CODE');
+        }
+      });
+
+      it('should extract short code from URL with different base', () => {
+        const result = parsePairingData('https://example.com/app/?peer=AB12-CD34');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.shortCode).toBe('AB12-CD34');
+          expect(result.error).toBe('SHORT_CODE');
+        }
+      });
+
+      it('should extract short code from URL with additional params', () => {
+        const result = parsePairingData('https://example.com/?foo=bar&peer=AXBK-7392&baz=1');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.shortCode).toBe('AXBK-7392');
+        }
+      });
+
+      it('should uppercase the extracted short code', () => {
+        const result = parsePairingData('https://example.com/?peer=axbk-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.shortCode).toBe('AXBK-7392');
+        }
+      });
+    });
+
+    describe('parsePairingData with raw short code', () => {
+      it('should detect raw short code input', () => {
+        const result = parsePairingData('AXBK-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.shortCode).toBe('AXBK-7392');
+          expect(result.error).toBe('SHORT_CODE');
+        }
+      });
+
+      it('should uppercase raw short code', () => {
+        const result = parsePairingData('axbk-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.shortCode).toBe('AXBK-7392');
+        }
+      });
+    });
+
+    describe('parsePairingData legacy format still works', () => {
+      it('should still parse valid JSON pairing data', () => {
+        const data: PairingData = {
+          device_id: 'test-device',
+          public_key: 'test-key',
+          relay_url: 'wss://test.com',
+          expires: Math.floor(Date.now() / 1000) + 3600,
+        };
+        const result = parsePairingData(JSON.stringify(data));
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.device_id).toBe('test-device');
+        }
+      });
+    });
+
+    describe('lookupPairingCode', () => {
+      let originalFetch: typeof globalThis.fetch;
+
+      beforeEach(() => {
+        originalFetch = globalThis.fetch;
+      });
+
+      afterEach(() => {
+        globalThis.fetch = originalFetch;
+      });
+
+      it('should return pairing data on successful lookup', async () => {
+        const mockData = {
+          device_id: 'test-device-123',
+          public_key: 'dGVzdC1wdWJsaWMta2V5',
+          relay_url: 'wss://relay.example.com',
+          expires: Math.floor(Date.now() / 1000) + 3600,
+        };
+
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(mockData),
+        });
+
+        const result = await lookupPairingCode('AXBK-7392');
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.device_id).toBe('test-device-123');
+          expect(result.data.public_key).toBe('dGVzdC1wdWJsaWMta2V5');
+          expect(result.data.relay_url).toBe('wss://relay.example.com');
+        }
+      });
+
+      it('should return error on 404 (not found or expired)', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+        });
+
+        const result = await lookupPairingCode('XXXX-XXXX');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('not found');
+        }
+      });
+
+      it('should return error on server error', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+        });
+
+        const result = await lookupPairingCode('AXBK-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('500');
+        }
+      });
+
+      it('should return error on network failure', async () => {
+        globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+
+        const result = await lookupPairingCode('AXBK-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('Network error');
+        }
+      });
+
+      it('should return error on invalid server response', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ foo: 'bar' }), // missing required fields
+        });
+
+        const result = await lookupPairingCode('AXBK-7392');
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain('Invalid pairing data');
+        }
+      });
     });
   });
 

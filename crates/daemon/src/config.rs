@@ -38,6 +38,9 @@ const VALID_LOG_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error"];
 /// Default signaling server URL.
 pub const DEFAULT_SIGNALING_URL: &str = "wss://remoshell-signaling.moukrea.workers.dev";
 
+/// Default web application URL for pairing.
+pub const DEFAULT_WEB_APP_URL: &str = "https://moukrea.github.io/remoshell/";
+
 /// Main configuration structure for the RemoShell daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]

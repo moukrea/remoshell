@@ -103,12 +103,145 @@ describe("Signaling Worker", () => {
       vars: {
         ROOM_TTL_SECONDS: "60",
         RATE_LIMIT_MESSAGES_PER_SECOND: "10",
+        PAIRING_TTL_SECONDS: "300",
       },
     });
   });
 
   afterAll(async () => {
     await worker.stop();
+  });
+
+  describe("Pairing Endpoints", () => {
+    const validPairingBody = {
+      code: "AXBK-7392",
+      info: {
+        device_id: "test-device-123",
+        public_key: "dGVzdC1wdWJsaWMta2V5",
+        relay_url: "wss://relay.example.com",
+        expires: Math.floor(Date.now() / 1000) + 300,
+      },
+      ttl: 300,
+    };
+
+    it("should register a pairing code via POST /pair", async () => {
+      const res = await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validPairingBody),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean };
+      expect(body.ok).toBe(true);
+    });
+
+    it("should look up a registered pairing code via GET /pair/:code", async () => {
+      // Register first
+      await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validPairingBody),
+      });
+
+      // Look up
+      const res = await worker.fetch(`/pair/${validPairingBody.code}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        device_id: string;
+        public_key: string;
+        relay_url: string;
+        expires: number;
+      };
+      expect(body.device_id).toBe(validPairingBody.info.device_id);
+      expect(body.public_key).toBe(validPairingBody.info.public_key);
+      expect(body.relay_url).toBe(validPairingBody.info.relay_url);
+    });
+
+    it("should return 404 for unknown pairing code", async () => {
+      const res = await worker.fetch("/pair/UNKNOWN-CODE");
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("Not found");
+    });
+
+    it("should return 404 for expired pairing code", async () => {
+      // Register with 1-second TTL
+      const shortLivedBody = {
+        code: "EXPR-TEST",
+        info: validPairingBody.info,
+        ttl: 1,
+      };
+      const registerRes = await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(shortLivedBody),
+      });
+      expect(registerRes.status).toBe(200);
+
+      // Verify it's accessible immediately
+      const immediateRes = await worker.fetch("/pair/EXPR-TEST");
+      expect(immediateRes.status).toBe(200);
+
+      // Wait for expiry (1s TTL + buffer)
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      // Should now return 404 with "Expired" error
+      const expiredRes = await worker.fetch("/pair/EXPR-TEST");
+      expect(expiredRes.status).toBe(404);
+      const body = (await expiredRes.json()) as { error: string };
+      expect(body.error).toBe("Expired");
+    });
+
+    it("should return 400 for POST /pair with missing fields", async () => {
+      const res = await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: "ABCD-1234" }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("should return 400 for POST /pair with invalid code format", async () => {
+      const res = await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: "AB", info: validPairingBody.info }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("should return 400 for POST /pair with invalid info", async () => {
+      const res = await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: "ABCD-1234",
+          info: { device_id: "x" }, // missing required fields
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("should include CORS headers on pairing responses", async () => {
+      const res = await worker.fetch("/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validPairingBody),
+      });
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+
+      const getRes = await worker.fetch(`/pair/${validPairingBody.code}`);
+      expect(getRes.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    });
+
+    it("should include POST in OPTIONS preflight methods", async () => {
+      const res = await worker.fetch("/pair", {
+        method: "OPTIONS",
+      });
+      expect(res.status).toBe(200);
+      const methods = res.headers.get("Access-Control-Allow-Methods");
+      expect(methods).toContain("POST");
+    });
   });
 
   describe("HTTP Endpoints", () => {

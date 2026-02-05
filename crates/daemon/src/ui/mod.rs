@@ -12,11 +12,16 @@ pub mod tui;
 // Re-export main types for convenience
 pub use tui::{
     device_id_to_hex, process_approval_result, ApprovalAction, ApprovalInfo, ApprovalResult,
-    DaemonStats, DeviceInfo, SessionInfo, Tab, TuiApp, TuiEvent,
+    DaemonStats, DeviceInfo, DisplayTrustLevel, PairingConfig, SessionInfo, Tab, TuiApp, TuiEvent,
 };
 
 // Re-export QR types for convenience
-pub use qr::{generate_png_qr, generate_terminal_qr, PairingInfo, DEFAULT_EXPIRY_SECONDS};
+pub use qr::{
+    generate_pairing_code, generate_png_qr, generate_png_qr_from_data, generate_qr_modules,
+    generate_qr_modules_from_data, generate_terminal_qr, generate_terminal_qr_from_data,
+    generate_terminal_qr_inverted, pairing_url, register_pairing_code, signaling_url_to_http,
+    to_base58, PairingInfo, DEFAULT_EXPIRY_SECONDS,
+};
 
 // Re-export systemd types for convenience (Linux only)
 #[cfg(target_os = "linux")]

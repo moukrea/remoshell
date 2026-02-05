@@ -8,7 +8,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use daemon::config::{Config, DEFAULT_SIGNALING_URL};
 use daemon::ipc::{get_daemon_pid, get_socket_path, is_daemon_running, IpcClient, IpcResponse};
 use daemon::orchestrator::{DaemonOrchestrator, OrchestratorEvent, OrchestratorState};
-use daemon::ui::qr::{generate_png_qr, generate_terminal_qr, PairingInfo};
+use daemon::ui::qr::{
+    generate_pairing_code, generate_png_qr_from_data, generate_terminal_qr_from_data, pairing_url,
+    register_pairing_code, PairingInfo,
+};
 
 /// RemoShell Daemon - headless service for remote shell connections.
 #[derive(Parser, Debug)]
@@ -142,15 +145,8 @@ pub enum PairFormat {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing
-    let filter = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt().with_env_filter(filter).init();
-
-    tracing::info!("RemoShell daemon starting...");
-
-    // Load configuration
+    // Load configuration (before tracing init so TUI mode can redirect logs)
     let mut config = if let Some(config_path) = &cli.config {
-        tracing::info!("Using config file: {:?}", config_path);
         Config::load(config_path)?
     } else {
         Config::load_default()?
@@ -161,6 +157,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Validate configuration
     config.validate()?;
+
+    // Initialize tracing (after config load so we know the data_dir for TUI log file)
+    let filter = if cli.verbose { "debug" } else { "info" };
+    let _guard = init_tracing(&cli.command, filter, &config.daemon.data_dir)?;
+
+    tracing::info!("RemoShell daemon starting...");
+    if let Some(ref config_path) = cli.config {
+        tracing::info!("Using config file: {:?}", config_path);
+    }
 
     // Handle commands
     match cli.command {
@@ -361,35 +366,57 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Device identity: {}", identity.device_id().fingerprint());
 
             // Create pairing info
-            let pairing_info = PairingInfo::from_identity(&identity, relay_url, Some(expiry));
+            let pairing_info =
+                PairingInfo::from_identity(&identity, relay_url.clone(), Some(expiry));
+
+            // Generate a short pairing code
+            let code = generate_pairing_code();
+
+            // Build pairing URL
+            let url = pairing_url(daemon::config::DEFAULT_WEB_APP_URL, &code);
+
+            // Register code with signaling server
+            match register_pairing_code(&relay_url, &code, &pairing_info).await {
+                Ok(()) => {
+                    tracing::info!("Pairing code {} registered successfully", code);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to register pairing code with signaling server: {}",
+                        e
+                    );
+                    eprintln!(
+                        "The QR code will still be displayed, but short-code pairing may not work."
+                    );
+                    tracing::warn!("Failed to register pairing code: {}", e);
+                }
+            }
 
             match format {
-                PairFormat::Terminal => {
-                    // Generate and print terminal QR code
-                    match generate_terminal_qr(&pairing_info) {
-                        Ok(qr) => {
-                            println!("\nScan this QR code to pair:\n");
-                            println!("{}", qr);
-                            println!("Device ID: {}", pairing_info.device_id);
-                            println!(
-                                "Expires in: {} seconds",
-                                pairing_info.seconds_until_expiry()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to generate QR code: {}", e);
-                            anyhow::bail!("Failed to generate QR code: {}", e);
-                        }
+                PairFormat::Terminal => match generate_terminal_qr_from_data(url.as_bytes()) {
+                    Ok(qr) => {
+                        println!("\nScan this QR code to pair:\n");
+                        println!("{}", qr);
+                        println!("Pairing code: {}", code);
+                        println!("URL: {}", url);
+                        println!(
+                            "Expires in: {} seconds",
+                            pairing_info.seconds_until_expiry()
+                        );
                     }
-                }
+                    Err(e) => {
+                        tracing::error!("Failed to generate QR code: {}", e);
+                        anyhow::bail!("Failed to generate QR code: {}", e);
+                    }
+                },
                 PairFormat::Png => {
-                    // Determine output path
                     let output_path = output.unwrap_or_else(|| PathBuf::from("pairing-qr.png"));
 
-                    match generate_png_qr(&pairing_info, &output_path) {
+                    match generate_png_qr_from_data(url.as_bytes(), &output_path) {
                         Ok(()) => {
                             println!("QR code saved to: {}", output_path.display());
-                            println!("Device ID: {}", pairing_info.device_id);
+                            println!("Pairing code: {}", code);
+                            println!("URL: {}", url);
                             println!(
                                 "Expires in: {} seconds",
                                 pairing_info.seconds_until_expiry()
@@ -406,6 +433,36 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Initialize tracing based on the command mode.
+///
+/// In TUI mode, logs are written to a file to avoid corrupting the terminal display.
+/// In all other modes, logs go to stderr as usual.
+fn init_tracing(
+    command: &Commands,
+    filter: &str,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+    match command {
+        Commands::Start { tui: true, .. } => {
+            // TUI mode: logs to file to avoid corrupting terminal
+            std::fs::create_dir_all(data_dir)?;
+            let file_appender = tracing_appender::rolling::daily(data_dir, "daemon.log");
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_writer(non_blocking)
+                .with_ansi(false)
+                .init();
+            Ok(Some(guard))
+        }
+        _ => {
+            // Headless/systemd/CLI: logs to stderr
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+            Ok(None)
+        }
+    }
 }
 
 /// Parse a signal string into a signal number.
@@ -868,13 +925,27 @@ async fn run_systemd_mode(orchestrator: &mut DaemonOrchestrator) -> anyhow::Resu
 
 /// Run the daemon with TUI interface.
 async fn run_with_tui(orchestrator: &mut DaemonOrchestrator) -> anyhow::Result<()> {
-    use daemon::ui::tui::{process_approval_result, TuiApp, TuiEvent};
+    use daemon::session::SessionManager as _;
+    use daemon::ui::tui::{process_approval_result, PairingConfig, TuiApp, TuiEvent};
+    use daemon::ui::DisplayTrustLevel;
 
     // Start the orchestrator
     orchestrator.start().await?;
 
+    // Build pairing config from orchestrator identity
+    let pairing_config = {
+        let identity = orchestrator.identity();
+        let mut device_id_bytes = [0u8; 16];
+        device_id_bytes.copy_from_slice(identity.device_id().as_bytes());
+        PairingConfig {
+            device_id_bytes,
+            public_key_bytes: identity.public_key_bytes(),
+            relay_url: orchestrator.signaling_url().to_string(),
+        }
+    };
+
     // Create TUI app
-    let (mut tui_app, tui_tx) = TuiApp::new()?;
+    let (mut tui_app, tui_tx) = TuiApp::new(Some(pairing_config))?;
 
     // Take the approval receiver to handle approval results
     let mut approval_rx = tui_app
@@ -898,17 +969,50 @@ async fn run_with_tui(orchestrator: &mut DaemonOrchestrator) -> anyhow::Result<(
         }
     });
 
-    // Spawn task to forward orchestrator events to TUI
-    // This would require adding an event subscription mechanism to the orchestrator
-    // For now, we'll use a periodic stats update
+    // Spawn task to periodically send real stats to TUI
     let stats_tx = tui_tx.clone();
+    let stats_connections = orchestrator.connections();
+    let stats_session_mgr = orchestrator.session_manager().clone();
     let stats_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             interval.tick().await;
-            // Send refresh event to update stats display
-            if stats_tx.send(TuiEvent::Refresh).await.is_err() {
+            let devices_connected = stats_connections.read().await.len();
+            let sessions_active = stats_session_mgr.count();
+            if stats_tx
+                .send(TuiEvent::StatsUpdate {
+                    devices_connected,
+                    sessions_active,
+                    uptime_secs: 0, // uptime calculated by TUI from start_time
+                })
+                .await
+                .is_err()
+            {
                 break;
+            }
+        }
+    });
+
+    // Spawn task to forward orchestrator events to TUI
+    let mut orch_events = orchestrator.subscribe();
+    let orch_tx = tui_tx.clone();
+    let orch_handle = tokio::spawn(async move {
+        while let Ok(event) = orch_events.recv().await {
+            let tui_event = match event {
+                OrchestratorEvent::PeerConnected { device_id } => Some(TuiEvent::DeviceConnected {
+                    device_id,
+                    name: "Unknown".to_string(),
+                    trust_level: DisplayTrustLevel::Unknown,
+                }),
+                OrchestratorEvent::PeerDisconnected { device_id, .. } => {
+                    Some(TuiEvent::DeviceDisconnected { device_id })
+                }
+                _ => None,
+            };
+            if let Some(evt) = tui_event {
+                if orch_tx.send(evt).await.is_err() {
+                    break;
+                }
             }
         }
     });
@@ -917,6 +1021,7 @@ async fn run_with_tui(orchestrator: &mut DaemonOrchestrator) -> anyhow::Result<(
     let result = tui_app.run().await;
 
     // Cleanup
+    orch_handle.abort();
     stats_handle.abort();
     approval_handle.abort();
 
