@@ -70,7 +70,8 @@ impl ChannelType {
 // Re-export key types
 pub use quic::{QuicConfig, QuicConnectionHandler, REMOSHELL_ALPN};
 pub use signaling::{
-    ConnectionState as SignalingConnectionState, SignalingClient, SignalingConfig, SignalingEvent,
-    SignalingMessage, WebSocketSignalingClient,
+    ConnectionState as SignalingConnectionState, IncomingMessage as SignalingIncomingMessage,
+    OutgoingMessage as SignalingOutgoingMessage, SignalingClient, SignalingConfig, SignalingEvent,
+    WebSocketSignalingClient,
 };
 pub use webrtc::{IceServer, WebRtcConfig, WebRtcConnectionHandler};

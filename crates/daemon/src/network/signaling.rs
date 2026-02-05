@@ -2,9 +2,12 @@
 //!
 //! This module provides a client for connecting to the signaling server,
 //! which coordinates WebRTC peer connections through:
-//! - Room management (join/leave)
+//! - Room management (URL-path-based: `/room/{roomId}`)
 //! - SDP offer/answer exchange
 //! - ICE candidate relay
+//!
+//! The server uses a `data` envelope for messages and `peerId` (UUID assigned
+//! by the server) for peer identification. Message types use kebab-case.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,44 +29,114 @@ const INITIAL_BACKOFF_MS: u64 = 100;
 const MAX_BACKOFF_MS: u64 = 30_000;
 const BACKOFF_MULTIPLIER: f64 = 2.0;
 
-/// Signaling message types exchanged with the server.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum SignalingMessage {
-    /// Join a room with device ID.
-    Join { device_id: String, room_id: String },
-    /// Leave the current room.
-    Leave,
-    /// Send an SDP offer.
+// ---------------------------------------------------------------------------
+// Outgoing messages (daemon → signaling server)
+// ---------------------------------------------------------------------------
+
+/// SDP data wrapped in the `data` envelope for offer/answer messages.
+#[derive(Debug, Clone, Serialize)]
+pub struct SdpData {
+    pub sdp: String,
+    #[serde(rename = "type")]
+    pub sdp_type: String,
+}
+
+/// ICE candidate data wrapped in the `data` envelope.
+#[derive(Debug, Clone, Serialize)]
+pub struct IceCandidateData {
+    pub candidate: String,
+    #[serde(rename = "sdpMid", skip_serializing_if = "Option::is_none")]
+    pub sdp_mid: Option<String>,
+    #[serde(rename = "sdpMLineIndex", skip_serializing_if = "Option::is_none")]
+    pub sdp_mline_index: Option<u16>,
+}
+
+/// Messages sent from the daemon to the signaling server.
+///
+/// The server only accepts `offer`, `answer`, and `ice` — room membership
+/// is handled by connecting to `/room/{roomId}`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum OutgoingMessage {
+    Offer { data: SdpData },
+    Answer { data: SdpData },
+    Ice { data: IceCandidateData },
+}
+
+// ---------------------------------------------------------------------------
+// Incoming messages (signaling server → daemon)
+// ---------------------------------------------------------------------------
+
+/// Join data received when the server confirms room membership.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JoinData {
+    pub peers: Vec<String>,
+}
+
+/// SDP data received from a peer (inside the `data` envelope).
+#[derive(Debug, Clone, Deserialize)]
+pub struct IncomingSdpData {
+    pub sdp: String,
+    #[serde(rename = "type")]
+    pub sdp_type: Option<String>,
+}
+
+/// ICE candidate data received from a peer.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IncomingIceCandidateData {
+    pub candidate: String,
+    #[serde(rename = "sdpMid")]
+    pub sdp_mid: Option<String>,
+    #[serde(rename = "sdpMLineIndex")]
+    pub sdp_mline_index: Option<u16>,
+}
+
+/// Error data from the server.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ErrorData {
+    pub message: String,
+}
+
+/// Messages received from the signaling server.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum IncomingMessage {
+    /// Server confirms room join and provides our peer ID + existing peers.
+    Join {
+        #[serde(rename = "peerId")]
+        peer_id: String,
+        data: JoinData,
+    },
+    /// A new peer joined the room.
+    PeerJoined {
+        #[serde(rename = "peerId")]
+        peer_id: String,
+    },
+    /// A peer left the room.
+    PeerLeft {
+        #[serde(rename = "peerId")]
+        peer_id: String,
+    },
+    /// SDP offer relayed from another peer.
     Offer {
-        sdp: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        target_device_id: Option<String>,
+        #[serde(rename = "peerId")]
+        peer_id: String,
+        data: IncomingSdpData,
     },
-    /// Send an SDP answer.
+    /// SDP answer relayed from another peer.
     Answer {
-        sdp: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        target_device_id: Option<String>,
+        #[serde(rename = "peerId")]
+        peer_id: String,
+        data: IncomingSdpData,
     },
-    /// Send an ICE candidate.
+    /// ICE candidate relayed from another peer.
     Ice {
-        candidate: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        sdp_mid: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        sdp_mline_index: Option<u16>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        target_device_id: Option<String>,
+        #[serde(rename = "peerId")]
+        peer_id: String,
+        data: IncomingIceCandidateData,
     },
-    /// Peer joined the room.
-    PeerJoined { device_id: String },
-    /// Peer left the room.
-    PeerLeft { device_id: String },
-    /// Error from server.
-    Error { message: String },
-    /// Room joined successfully.
-    Joined { room_id: String },
+    /// Error from the server.
+    Error { data: ErrorData },
 }
 
 /// Connection state for the signaling client.
@@ -84,29 +157,27 @@ pub enum ConnectionState {
 pub enum SignalingEvent {
     /// Connection state changed.
     StateChanged(ConnectionState),
+    /// Successfully joined a room. Contains our server-assigned peer ID
+    /// and the list of peers already in the room.
+    RoomJoined {
+        peer_id: String,
+        existing_peers: Vec<String>,
+    },
     /// Received an offer from a peer.
-    OfferReceived {
-        sdp: String,
-        from_device_id: Option<String>,
-    },
+    OfferReceived { sdp: String, from_peer_id: String },
     /// Received an answer from a peer.
-    AnswerReceived {
-        sdp: String,
-        from_device_id: Option<String>,
-    },
+    AnswerReceived { sdp: String, from_peer_id: String },
     /// Received an ICE candidate from a peer.
     IceCandidateReceived {
         candidate: String,
         sdp_mid: Option<String>,
         sdp_mline_index: Option<u16>,
-        from_device_id: Option<String>,
+        from_peer_id: String,
     },
     /// A peer joined the room.
-    PeerJoined { device_id: String },
+    PeerJoined { peer_id: String },
     /// A peer left the room.
-    PeerLeft { device_id: String },
-    /// Joined a room successfully.
-    RoomJoined { room_id: String },
+    PeerLeft { peer_id: String },
     /// Error occurred.
     Error { message: String },
 }
@@ -126,10 +197,10 @@ pub trait SignalingClient: Send + Sync {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
-    /// Joins a room with the given device ID.
+    /// Joins a room by connecting to `/room/{room_id}` on the server.
+    /// The server assigns a peer ID upon joining.
     fn join_room(
         &self,
-        device_id: &str,
         room_id: &str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
@@ -138,27 +209,27 @@ pub trait SignalingClient: Send + Sync {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
-    /// Sends an SDP offer.
+    /// Sends an SDP offer to all peers in the room.
     fn send_offer(
         &self,
         sdp: &str,
-        target_device_id: Option<&str>,
+        target_peer_id: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
-    /// Sends an SDP answer.
+    /// Sends an SDP answer to all peers in the room.
     fn send_answer(
         &self,
         sdp: &str,
-        target_device_id: Option<&str>,
+        target_peer_id: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
-    /// Sends an ICE candidate.
+    /// Sends an ICE candidate to all peers in the room.
     fn send_ice_candidate(
         &self,
         candidate: &str,
         sdp_mid: Option<&str>,
         sdp_mline_index: Option<u16>,
-        target_device_id: Option<&str>,
+        target_peer_id: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
     /// Returns the current connection state.
@@ -172,7 +243,7 @@ pub trait SignalingClient: Send + Sync {
 /// Configuration for the WebSocket signaling client.
 #[derive(Debug, Clone)]
 pub struct SignalingConfig {
-    /// The WebSocket URL of the signaling server.
+    /// The WebSocket URL of the signaling server (base, without room path).
     pub server_url: String,
     /// Initial backoff duration for reconnection.
     pub initial_backoff: Duration,
@@ -236,10 +307,10 @@ struct ClientState {
     connection_state: ConnectionState,
     /// Current room ID (if joined).
     current_room: Option<String>,
-    /// Current device ID (if joined).
-    current_device_id: Option<String>,
+    /// Server-assigned peer ID for this connection.
+    server_peer_id: Option<String>,
     /// Sender for outgoing messages.
-    message_tx: Option<mpsc::Sender<SignalingMessage>>,
+    message_tx: Option<mpsc::Sender<OutgoingMessage>>,
     /// Current backoff duration for reconnection.
     current_backoff: Duration,
     /// Whether a shutdown has been requested.
@@ -251,7 +322,7 @@ impl Default for ClientState {
         Self {
             connection_state: ConnectionState::Disconnected,
             current_room: None,
-            current_device_id: None,
+            server_peer_id: None,
             message_tx: None,
             current_backoff: Duration::from_millis(INITIAL_BACKOFF_MS),
             shutdown_requested: false,
@@ -286,43 +357,20 @@ impl WebSocketSignalingClient {
 
     /// Updates the connection state and emits an event.
     ///
-    /// # Atomicity Guarantee
-    ///
-    /// This method ensures atomic state transitions by capturing the state
-    /// change information (old state and new state) while holding the lock.
-    /// The event is then emitted after releasing the lock, but the event
-    /// contains the exact state values that were read/written during the
-    /// transition.
-    ///
-    /// **Important**: Event handlers should use the state value from the event
-    /// itself (e.g., `event.new_state`) rather than querying `client.state()`,
-    /// as the current state may have changed by the time the handler runs.
-    /// This ensures callbacks always see a consistent view of the transition.
-    ///
     /// If the state hasn't changed, no event is emitted (early return).
     async fn set_state(&self, new_state: ConnectionState) {
-        // Capture transition details while holding the lock to ensure atomicity.
-        // The event is created inside the lock scope so it contains the exact
-        // state that was written, even if another state change happens after
-        // the lock is released.
         let should_emit = {
             let mut state = self.state.write().await;
             let old_state = state.connection_state;
 
-            // Early return if state hasn't changed - no event needed
             if old_state == new_state {
                 return;
             }
 
             state.connection_state = new_state;
-
-            // Event data is captured while lock is held, guaranteeing consistency
             true
-        }; // Lock released here, but we've already captured the transition
+        };
 
-        // Safe to emit - the event contains the exact state that was set
-        // Note: `new_state` was passed as a parameter, so it's guaranteed to
-        // match what was written above
         if should_emit {
             if let Err(e) = self
                 .event_tx
@@ -334,8 +382,8 @@ impl WebSocketSignalingClient {
         }
     }
 
-    /// Sends a message to the signaling server.
-    async fn send_message(&self, message: SignalingMessage) -> Result<()> {
+    /// Sends an outgoing message to the signaling server.
+    async fn send_message(&self, message: OutgoingMessage) -> Result<()> {
         let state = self.state.read().await;
         if let Some(ref tx) = state.message_tx {
             tx.send(message).await.map_err(|e| {
@@ -350,109 +398,106 @@ impl WebSocketSignalingClient {
     }
 
     /// Handles an incoming message from the server.
-    async fn handle_message(&self, message: SignalingMessage) {
+    async fn handle_message(&self, message: IncomingMessage) {
         match message {
-            SignalingMessage::Joined { room_id } => {
+            IncomingMessage::Join { peer_id, data } => {
                 {
                     let mut state = self.state.write().await;
-                    state.current_room = Some(room_id.clone());
+                    state.server_peer_id = Some(peer_id.clone());
                 }
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::RoomJoined {
-                        room_id: room_id.clone(),
+                        peer_id: peer_id.clone(),
+                        existing_peers: data.peers,
                     })
                     .await
                 {
-                    tracing::warn!(error = %e, room_id = %room_id, "Failed to send RoomJoined event - receiver may be dropped");
+                    tracing::warn!(error = %e, peer_id = %peer_id, "Failed to send RoomJoined event - receiver may be dropped");
                 }
             }
-            SignalingMessage::Offer {
-                sdp,
-                target_device_id,
-            } => {
+            IncomingMessage::Offer { peer_id, data } => {
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::OfferReceived {
-                        sdp,
-                        from_device_id: target_device_id,
+                        sdp: data.sdp,
+                        from_peer_id: peer_id,
                     })
                     .await
                 {
                     tracing::warn!(error = %e, "Failed to send OfferReceived event - receiver may be dropped");
                 }
             }
-            SignalingMessage::Answer {
-                sdp,
-                target_device_id,
-            } => {
+            IncomingMessage::Answer { peer_id, data } => {
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::AnswerReceived {
-                        sdp,
-                        from_device_id: target_device_id,
+                        sdp: data.sdp,
+                        from_peer_id: peer_id,
                     })
                     .await
                 {
                     tracing::warn!(error = %e, "Failed to send AnswerReceived event - receiver may be dropped");
                 }
             }
-            SignalingMessage::Ice {
-                candidate,
-                sdp_mid,
-                sdp_mline_index,
-                target_device_id,
-            } => {
+            IncomingMessage::Ice { peer_id, data } => {
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::IceCandidateReceived {
-                        candidate,
-                        sdp_mid,
-                        sdp_mline_index,
-                        from_device_id: target_device_id,
+                        candidate: data.candidate,
+                        sdp_mid: data.sdp_mid,
+                        sdp_mline_index: data.sdp_mline_index,
+                        from_peer_id: peer_id,
                     })
                     .await
                 {
                     tracing::warn!(error = %e, "Failed to send IceCandidateReceived event - receiver may be dropped");
                 }
             }
-            SignalingMessage::PeerJoined { device_id } => {
+            IncomingMessage::PeerJoined { peer_id } => {
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::PeerJoined {
-                        device_id: device_id.clone(),
+                        peer_id: peer_id.clone(),
                     })
                     .await
                 {
-                    tracing::warn!(error = %e, device_id = %device_id, "Failed to send PeerJoined event - receiver may be dropped");
+                    tracing::warn!(error = %e, peer_id = %peer_id, "Failed to send PeerJoined event - receiver may be dropped");
                 }
             }
-            SignalingMessage::PeerLeft { device_id } => {
+            IncomingMessage::PeerLeft { peer_id } => {
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::PeerLeft {
-                        device_id: device_id.clone(),
+                        peer_id: peer_id.clone(),
                     })
                     .await
                 {
-                    tracing::warn!(error = %e, device_id = %device_id, "Failed to send PeerLeft event - receiver may be dropped");
+                    tracing::warn!(error = %e, peer_id = %peer_id, "Failed to send PeerLeft event - receiver may be dropped");
                 }
             }
-            SignalingMessage::Error { message } => {
+            IncomingMessage::Error { data } => {
                 if let Err(e) = self
                     .event_tx
                     .send(SignalingEvent::Error {
-                        message: message.clone(),
+                        message: data.message.clone(),
                     })
                     .await
                 {
-                    tracing::warn!(error = %e, signaling_error = %message, "Failed to send Error event - receiver may be dropped");
+                    tracing::warn!(error = %e, signaling_error = %data.message, "Failed to send Error event - receiver may be dropped");
                 }
             }
-            _ => {
-                // Ignore other message types (Join, Leave are outgoing only)
-            }
         }
+    }
+
+    /// Builds the WebSocket URL for connecting to a room.
+    fn build_room_url(&self, room_id: &str) -> Result<String> {
+        let base = self.config.server_url.trim_end_matches('/');
+        let ws_url = format!("{}/room/{}", base, room_id);
+        // Validate
+        Url::parse(&ws_url)
+            .map_err(|e| ProtocolError::HandshakeFailed(format!("invalid signaling URL: {}", e)))?;
+        Ok(ws_url)
     }
 
     /// Runs the connection loop with reconnection support.
@@ -466,10 +511,23 @@ impl WebSocketSignalingClient {
                 }
             }
 
+            // Get room ID to connect to
+            let room_id = {
+                let state = self.state.read().await;
+                state.current_room.clone()
+            };
+
+            // Only attempt connection if we have a room to join
+            let Some(room_id) = room_id else {
+                // No room set yet, wait and check again
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            };
+
             // Attempt to connect
             self.set_state(ConnectionState::Connecting).await;
 
-            match self.connect_internal().await {
+            match self.connect_internal(&room_id).await {
                 Ok((message_tx, mut ws_rx, control_tx, last_pong)) => {
                     // Connection successful
                     {
@@ -478,21 +536,6 @@ impl WebSocketSignalingClient {
                         state.current_backoff = self.config.initial_backoff;
                     }
                     self.set_state(ConnectionState::Connected).await;
-
-                    // Re-join room if we were in one
-                    {
-                        let state = self.state.read().await;
-                        if let (Some(room_id), Some(device_id)) =
-                            (&state.current_room, &state.current_device_id)
-                        {
-                            let msg = SignalingMessage::Join {
-                                device_id: device_id.clone(),
-                                room_id: room_id.clone(),
-                            };
-                            drop(state);
-                            let _ = self.send_message(msg).await;
-                        }
-                    }
 
                     // Set up heartbeat interval timer
                     let mut heartbeat_interval =
@@ -535,6 +578,7 @@ impl WebSocketSignalingClient {
                     {
                         let mut state = self.state.write().await;
                         state.message_tx = None;
+                        state.server_peer_id = None;
                     }
                 }
                 Err(e) => {
@@ -574,36 +618,37 @@ impl WebSocketSignalingClient {
 
     /// Internal connection establishment.
     ///
+    /// Connects to `{server_url}/room/{room_id}` via WebSocket.
+    /// The server sends a `join` message upon connection with our peer ID.
+    ///
     /// Returns:
-    /// - Sender for signaling messages
-    /// - Receiver for incoming signaling messages
+    /// - Sender for outgoing messages
+    /// - Receiver for incoming messages
     /// - Sender for WebSocket control frames (ping)
     /// - Shared timestamp of last pong received
     async fn connect_internal(
         &self,
+        room_id: &str,
     ) -> Result<(
-        mpsc::Sender<SignalingMessage>,
-        mpsc::Receiver<Result<SignalingMessage>>,
+        mpsc::Sender<OutgoingMessage>,
+        mpsc::Receiver<Result<IncomingMessage>>,
         mpsc::Sender<WsMessage>,
         Arc<RwLock<Instant>>,
     )> {
-        // Validate the URL format
-        let _url = Url::parse(&self.config.server_url)
-            .map_err(|e| ProtocolError::HandshakeFailed(format!("invalid signaling URL: {}", e)))?;
+        let ws_url = self.build_room_url(room_id)?;
 
-        // Pass the string directly to connect_async (it implements IntoClientRequest for &str)
-        let (ws_stream, _) = connect_async(&self.config.server_url)
-            .await
-            .map_err(|e| match e {
-                WsError::Io(io_err) => ProtocolError::from(io_err),
-                _ => ProtocolError::ConnectionClosed(format!("WebSocket connection failed: {}", e)),
-            })?;
+        tracing::info!("Connecting to signaling server: {}", ws_url);
+
+        let (ws_stream, _) = connect_async(&ws_url).await.map_err(|e| match e {
+            WsError::Io(io_err) => ProtocolError::from(io_err),
+            _ => ProtocolError::ConnectionClosed(format!("WebSocket connection failed: {}", e)),
+        })?;
 
         let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
         // Create channels for message passing
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<SignalingMessage>(256);
-        let (incoming_tx, incoming_rx) = mpsc::channel::<Result<SignalingMessage>>(256);
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<OutgoingMessage>(256);
+        let (incoming_tx, incoming_rx) = mpsc::channel::<Result<IncomingMessage>>(256);
         // Channel for raw WebSocket control frames (ping)
         let (control_tx, mut control_rx) = mpsc::channel::<WsMessage>(16);
 
@@ -644,14 +689,18 @@ impl WebSocketSignalingClient {
             while let Some(result) = ws_stream.next().await {
                 match result {
                     Ok(WsMessage::Text(text)) => {
-                        match serde_json::from_str::<SignalingMessage>(&text) {
+                        match serde_json::from_str::<IncomingMessage>(&text) {
                             Ok(msg) => {
                                 if incoming_tx.send(Ok(msg)).await.is_err() {
                                     break;
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("failed to parse signaling message: {}", e);
+                                tracing::warn!(
+                                    "failed to parse signaling message: {} (raw: {})",
+                                    e,
+                                    text
+                                );
                             }
                         }
                     }
@@ -717,6 +766,7 @@ impl SignalingClient for WebSocketSignalingClient {
             let mut state = self.state.write().await;
             state.shutdown_requested = true;
             state.message_tx = None;
+            state.server_peer_id = None;
             state.connection_state = ConnectionState::Disconnected;
             Ok(())
         })
@@ -724,21 +774,33 @@ impl SignalingClient for WebSocketSignalingClient {
 
     fn join_room(
         &self,
-        device_id: &str,
         room_id: &str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
-        let device_id = device_id.to_string();
         let room_id = room_id.to_string();
 
         Box::pin(async move {
             {
                 let mut state = self.state.write().await;
-                state.current_device_id = Some(device_id.clone());
                 state.current_room = Some(room_id.clone());
             }
 
-            self.send_message(SignalingMessage::Join { device_id, room_id })
-                .await
+            // The connection loop will pick up the room and connect.
+            // If we're already connected, we need to disconnect and reconnect
+            // to the new room URL (the server uses URL-based room routing).
+            let current_state = {
+                let state = self.state.read().await;
+                state.connection_state
+            };
+
+            if current_state == ConnectionState::Connected {
+                // Force a reconnect to the new room by dropping the current message sender.
+                // The connection loop will detect this and reconnect with the new room URL.
+                let mut state = self.state.write().await;
+                state.message_tx = None;
+                state.server_peer_id = None;
+            }
+
+            Ok(())
         })
     }
 
@@ -749,24 +811,26 @@ impl SignalingClient for WebSocketSignalingClient {
             {
                 let mut state = self.state.write().await;
                 state.current_room = None;
+                state.server_peer_id = None;
+                state.message_tx = None;
             }
-
-            self.send_message(SignalingMessage::Leave).await
+            Ok(())
         })
     }
 
     fn send_offer(
         &self,
         sdp: &str,
-        target_device_id: Option<&str>,
+        _target_peer_id: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
         let sdp = sdp.to_string();
-        let target_device_id = target_device_id.map(|s| s.to_string());
 
         Box::pin(async move {
-            self.send_message(SignalingMessage::Offer {
-                sdp,
-                target_device_id,
+            self.send_message(OutgoingMessage::Offer {
+                data: SdpData {
+                    sdp,
+                    sdp_type: "offer".to_string(),
+                },
             })
             .await
         })
@@ -775,15 +839,16 @@ impl SignalingClient for WebSocketSignalingClient {
     fn send_answer(
         &self,
         sdp: &str,
-        target_device_id: Option<&str>,
+        _target_peer_id: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
         let sdp = sdp.to_string();
-        let target_device_id = target_device_id.map(|s| s.to_string());
 
         Box::pin(async move {
-            self.send_message(SignalingMessage::Answer {
-                sdp,
-                target_device_id,
+            self.send_message(OutgoingMessage::Answer {
+                data: SdpData {
+                    sdp,
+                    sdp_type: "answer".to_string(),
+                },
             })
             .await
         })
@@ -794,18 +859,18 @@ impl SignalingClient for WebSocketSignalingClient {
         candidate: &str,
         sdp_mid: Option<&str>,
         sdp_mline_index: Option<u16>,
-        target_device_id: Option<&str>,
+        _target_peer_id: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
         let candidate = candidate.to_string();
         let sdp_mid = sdp_mid.map(|s| s.to_string());
-        let target_device_id = target_device_id.map(|s| s.to_string());
 
         Box::pin(async move {
-            self.send_message(SignalingMessage::Ice {
-                candidate,
-                sdp_mid,
-                sdp_mline_index,
-                target_device_id,
+            self.send_message(OutgoingMessage::Ice {
+                data: IceCandidateData {
+                    candidate,
+                    sdp_mid,
+                    sdp_mline_index,
+                },
             })
             .await
         })
@@ -821,7 +886,6 @@ impl SignalingClient for WebSocketSignalingClient {
 
     fn events(&self) -> Option<mpsc::Receiver<SignalingEvent>> {
         // Returns None if already taken or if lock is contended
-        // In production, consider a broadcast channel instead
         match self.event_rx.try_write() {
             Ok(mut guard) => guard.take(),
             Err(_) => None,
@@ -856,73 +920,104 @@ mod tests {
     }
 
     #[test]
-    fn test_signaling_message_serialization() {
-        let join = SignalingMessage::Join {
-            device_id: "device-123".to_string(),
-            room_id: "room-456".to_string(),
-        };
-        let json = serde_json::to_string(&join).unwrap();
-        assert!(json.contains("\"type\":\"join\""));
-        assert!(json.contains("\"device_id\":\"device-123\""));
-        assert!(json.contains("\"room_id\":\"room-456\""));
-
-        let offer = SignalingMessage::Offer {
-            sdp: "v=0\r\n...".to_string(),
-            target_device_id: None,
+    fn test_outgoing_message_serialization() {
+        let offer = OutgoingMessage::Offer {
+            data: SdpData {
+                sdp: "v=0\r\n...".to_string(),
+                sdp_type: "offer".to_string(),
+            },
         };
         let json = serde_json::to_string(&offer).unwrap();
         assert!(json.contains("\"type\":\"offer\""));
+        assert!(json.contains("\"data\":{"));
         assert!(json.contains("\"sdp\":\"v=0\\r\\n...\""));
 
-        let answer = SignalingMessage::Answer {
-            sdp: "v=0\r\n...".to_string(),
-            target_device_id: Some("target-789".to_string()),
+        let answer = OutgoingMessage::Answer {
+            data: SdpData {
+                sdp: "v=0\r\n...".to_string(),
+                sdp_type: "answer".to_string(),
+            },
         };
         let json = serde_json::to_string(&answer).unwrap();
         assert!(json.contains("\"type\":\"answer\""));
-        assert!(json.contains("\"target_device_id\":\"target-789\""));
 
-        let ice = SignalingMessage::Ice {
-            candidate: "candidate:1 1 UDP 2130706431 ...".to_string(),
-            sdp_mid: Some("0".to_string()),
-            sdp_mline_index: Some(0),
-            target_device_id: None,
+        let ice = OutgoingMessage::Ice {
+            data: IceCandidateData {
+                candidate: "candidate:1 1 UDP 2130706431 ...".to_string(),
+                sdp_mid: Some("0".to_string()),
+                sdp_mline_index: Some(0),
+            },
         };
         let json = serde_json::to_string(&ice).unwrap();
         assert!(json.contains("\"type\":\"ice\""));
         assert!(json.contains("\"candidate\":"));
+        assert!(json.contains("\"sdpMid\":\"0\""));
+        assert!(json.contains("\"sdpMLineIndex\":0"));
     }
 
     #[test]
-    fn test_signaling_message_deserialization() {
-        let json = r#"{"type":"join","device_id":"dev-1","room_id":"room-1"}"#;
-        let msg: SignalingMessage = serde_json::from_str(json).unwrap();
+    fn test_incoming_message_deserialization() {
+        // Join message from server
+        let json = r#"{"type":"join","peerId":"abc-123","data":{"peers":["peer-1","peer-2"]}}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
         match msg {
-            SignalingMessage::Join { device_id, room_id } => {
-                assert_eq!(device_id, "dev-1");
-                assert_eq!(room_id, "room-1");
+            IncomingMessage::Join { peer_id, data } => {
+                assert_eq!(peer_id, "abc-123");
+                assert_eq!(data.peers, vec!["peer-1", "peer-2"]);
             }
             _ => panic!("unexpected message type"),
         }
 
-        let json = r#"{"type":"offer","sdp":"test-sdp"}"#;
-        let msg: SignalingMessage = serde_json::from_str(json).unwrap();
+        // Offer relayed from a peer
+        let json = r#"{"type":"offer","peerId":"peer-1","data":{"sdp":"test-sdp","type":"offer"}}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
         match msg {
-            SignalingMessage::Offer {
-                sdp,
-                target_device_id,
-            } => {
-                assert_eq!(sdp, "test-sdp");
-                assert!(target_device_id.is_none());
+            IncomingMessage::Offer { peer_id, data } => {
+                assert_eq!(peer_id, "peer-1");
+                assert_eq!(data.sdp, "test-sdp");
             }
             _ => panic!("unexpected message type"),
         }
 
-        let json = r#"{"type":"error","message":"room not found"}"#;
-        let msg: SignalingMessage = serde_json::from_str(json).unwrap();
+        // Peer joined (kebab-case)
+        let json = r#"{"type":"peer-joined","peerId":"peer-2"}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
         match msg {
-            SignalingMessage::Error { message } => {
-                assert_eq!(message, "room not found");
+            IncomingMessage::PeerJoined { peer_id } => {
+                assert_eq!(peer_id, "peer-2");
+            }
+            _ => panic!("unexpected message type"),
+        }
+
+        // Peer left (kebab-case)
+        let json = r#"{"type":"peer-left","peerId":"peer-3"}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::PeerLeft { peer_id } => {
+                assert_eq!(peer_id, "peer-3");
+            }
+            _ => panic!("unexpected message type"),
+        }
+
+        // Error from server
+        let json = r#"{"type":"error","data":{"message":"Rate limit exceeded"}}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::Error { data } => {
+                assert_eq!(data.message, "Rate limit exceeded");
+            }
+            _ => panic!("unexpected message type"),
+        }
+
+        // ICE candidate
+        let json = r#"{"type":"ice","peerId":"peer-4","data":{"candidate":"candidate:1","sdpMid":"0","sdpMLineIndex":0}}"#;
+        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            IncomingMessage::Ice { peer_id, data } => {
+                assert_eq!(peer_id, "peer-4");
+                assert_eq!(data.candidate, "candidate:1");
+                assert_eq!(data.sdp_mid, Some("0".to_string()));
+                assert_eq!(data.sdp_mline_index, Some(0));
             }
             _ => panic!("unexpected message type"),
         }
@@ -965,9 +1060,11 @@ mod tests {
 
         // Should fail when not connected
         let result = client
-            .send_message(SignalingMessage::Join {
-                device_id: "test".to_string(),
-                room_id: "room".to_string(),
+            .send_message(OutgoingMessage::Offer {
+                data: SdpData {
+                    sdp: "test".to_string(),
+                    sdp_type: "offer".to_string(),
+                },
             })
             .await;
 
@@ -1001,8 +1098,6 @@ mod tests {
 
         // We can verify events are received by changing state
         client.set_state(ConnectionState::Connecting).await;
-
-        // Note: In a real test, we would receive the event from the receiver
     }
 
     #[tokio::test]
@@ -1010,12 +1105,11 @@ mod tests {
         let config = SignalingConfig::new("wss://localhost:8080");
         let client = WebSocketSignalingClient::new(config);
 
-        // Join room (will fail to send but should store state)
-        let _ = client.join_room("device-1", "room-1").await;
+        // Join room (will store room but no connection available)
+        let _ = client.join_room("room-1").await;
 
         // Verify state is stored
         let state = client.state.read().await;
-        assert_eq!(state.current_device_id, Some("device-1".to_string()));
         assert_eq!(state.current_room, Some("room-1".to_string()));
     }
 
@@ -1043,26 +1137,16 @@ mod tests {
         assert_ne!(ConnectionState::Disconnected, ConnectionState::Connected);
     }
 
-    /// Test that set_state() does not emit events when state hasn't changed.
-    ///
-    /// This is part of the atomicity guarantee: setting the same state twice
-    /// should only emit one event (the first one).
     #[tokio::test]
     async fn test_set_state_no_event_on_same_state() {
         let config = SignalingConfig::new("wss://localhost:8080");
         let client = WebSocketSignalingClient::new(config);
         let mut events = client.events().expect("events() should return receiver");
 
-        // Set to Connecting (should emit event)
         client.set_state(ConnectionState::Connecting).await;
-
-        // Set to Connecting again (should NOT emit event - early return)
         client.set_state(ConnectionState::Connecting).await;
-
-        // Set to Connected (should emit event)
         client.set_state(ConnectionState::Connected).await;
 
-        // Verify we only got 2 events, not 3
         let event1 = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
         assert!(event1.is_ok(), "Should receive first event");
         if let Ok(Some(SignalingEvent::StateChanged(state))) = event1 {
@@ -1079,7 +1163,6 @@ mod tests {
             panic!("Expected StateChanged(Connected)");
         }
 
-        // No third event should be waiting (the duplicate Connecting was skipped)
         let event3 = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
         assert!(
             event3.is_err(),
@@ -1087,18 +1170,12 @@ mod tests {
         );
     }
 
-    /// Test that state change events contain the correct state value.
-    ///
-    /// This verifies the atomicity guarantee: the event contains the exact
-    /// state that was written during the transition, ensuring callbacks
-    /// always see consistent state information.
     #[tokio::test]
     async fn test_set_state_event_contains_correct_state() {
         let config = SignalingConfig::new("wss://localhost:8080");
         let client = WebSocketSignalingClient::new(config);
         let mut events = client.events().expect("events() should return receiver");
 
-        // Perform a series of state transitions
         let transitions = [
             ConnectionState::Connecting,
             ConnectionState::Connected,
@@ -1124,13 +1201,26 @@ mod tests {
                 _ => panic!("Expected StateChanged event"),
             }
 
-            // Also verify the current state matches (sanity check)
             assert_eq!(
                 client.state(),
                 expected_state,
                 "Current state should match what was set"
             );
         }
+    }
+
+    #[test]
+    fn test_build_room_url() {
+        let config = SignalingConfig::new("wss://example.com");
+        let client = WebSocketSignalingClient::new(config);
+        let url = client.build_room_url("abc123").unwrap();
+        assert_eq!(url, "wss://example.com/room/abc123");
+
+        // With trailing slash
+        let config = SignalingConfig::new("wss://example.com/");
+        let client = WebSocketSignalingClient::new(config);
+        let url = client.build_room_url("abc123").unwrap();
+        assert_eq!(url, "wss://example.com/room/abc123");
     }
 
     /// Integration test for the signaling flow.
@@ -1140,7 +1230,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires running signaling server"]
     async fn test_signaling_flow_integration() {
-        let config = SignalingConfig::new("ws://localhost:8080/ws")
+        let config = SignalingConfig::new("ws://localhost:8080")
             .with_auto_reconnect(false)
             .with_initial_backoff(Duration::from_millis(100));
 
@@ -1149,28 +1239,23 @@ mod tests {
             .events()
             .expect("events() should return receiver on first call");
 
+        // Join a room (this sets the room and the connection loop will connect)
+        client.join_room("test-room").await.unwrap();
+
         // Start the client
         client.clone().start();
 
-        // Wait for connection
+        // Wait for room joined event (the server sends join message automatically)
         tokio::time::timeout(Duration::from_secs(5), async {
             while let Some(event) = events.recv().await {
-                if let SignalingEvent::StateChanged(ConnectionState::Connected) = event {
-                    break;
-                }
-            }
-        })
-        .await
-        .expect("connection timeout");
-
-        // Join a room
-        client.join_room("test-device", "test-room").await.unwrap();
-
-        // Wait for room joined event
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while let Some(event) = events.recv().await {
-                if let SignalingEvent::RoomJoined { room_id } = event {
-                    assert_eq!(room_id, "test-room");
+                if let SignalingEvent::RoomJoined {
+                    peer_id,
+                    existing_peers,
+                } = event
+                {
+                    assert!(!peer_id.is_empty());
+                    // existing_peers can be empty if we're the first in the room
+                    let _ = existing_peers;
                     break;
                 }
             }

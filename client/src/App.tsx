@@ -317,6 +317,26 @@ const DevicesView: Component = () => {
   const [selectedDeviceId, setSelectedDeviceId] = createSignal<string | null>(null);
   const [scannerKey, setScannerKey] = createSignal(0);
   const [customDeviceName, setCustomDeviceName] = createSignal('');
+  // Connection progress feedback: null | 'looking-up' | 'connecting' | 'waiting'
+  const [connectingStatus, setConnectingStatus] = createSignal<string | null>(null);
+  let connectionTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  // Listen for peer:connected to clear the waiting state and timeout
+  const unsubConnecting = connectionStore.subscribe((event) => {
+    if (event.type === 'peer:connected') {
+      setConnectingStatus(null);
+      if (connectionTimeoutId) {
+        clearTimeout(connectionTimeoutId);
+        connectionTimeoutId = undefined;
+      }
+    }
+  });
+  onCleanup(() => {
+    unsubConnecting();
+    if (connectionTimeoutId) {
+      clearTimeout(connectionTimeoutId);
+    }
+  });
 
   // Consume initialPeerCode set by App.onMount (from ?peer= URL or reload recovery)
   onMount(() => {
@@ -351,8 +371,9 @@ const DevicesView: Component = () => {
 
   const handlePairingComplete = async (code: string) => {
     try {
-      // Clear any previous error
+      // Clear any previous error and start progress
       setPairingError(null);
+      setConnectingStatus('looking-up');
 
       let pairingData: PairingData;
 
@@ -366,6 +387,7 @@ const DevicesView: Component = () => {
         const lookupResult = await lookupPairingCode(parseResult.shortCode);
         if (!lookupResult.success) {
           setPairingError(lookupResult.error);
+          setConnectingStatus(null);
           console.error('[Pairing] Short code lookup failed:', lookupResult.error);
           return;
         }
@@ -376,12 +398,14 @@ const DevicesView: Component = () => {
         const lookupResult = await lookupPairingCode(code.toUpperCase());
         if (!lookupResult.success) {
           setPairingError(lookupResult.error);
+          setConnectingStatus(null);
           console.error('[Pairing] Short code lookup failed:', lookupResult.error);
           return;
         }
         pairingData = lookupResult.data;
       } else {
         setPairingError(parseResult.error);
+        setConnectingStatus(null);
         console.error('[Pairing] Parse failed:', parseResult.error);
         return;
       }
@@ -389,6 +413,7 @@ const DevicesView: Component = () => {
       // Validate expiry
       if (isPairingExpired(pairingData)) {
         setPairingError('Pairing code has expired');
+        setConnectingStatus(null);
         console.error('[Pairing] Code expired');
         return;
       }
@@ -408,16 +433,32 @@ const DevicesView: Component = () => {
       });
 
       // Connect via orchestrator using device_id as room ID
+      setConnectingStatus('connecting');
       const orchestrator = getOrchestrator();
       await orchestrator.connect(pairingData.device_id);
 
-      // Reset custom name and hide pairing section
+      // Connection initiated — now waiting for device to respond
+      setConnectingStatus('waiting');
+      console.log('[Pairing] Successfully initiated connection to device:', pairingData.device_id, 'as', deviceName);
+
+      // Start a 30-second timeout for the device to respond
+      if (connectionTimeoutId) clearTimeout(connectionTimeoutId);
+      connectionTimeoutId = setTimeout(() => {
+        // Only show timeout if we're still in the waiting state
+        if (connectingStatus() === 'waiting') {
+          setConnectingStatus(null);
+          setPairingError('Device not reachable. The pairing code may have expired or the device may be offline. Try generating a new pairing code on the device.');
+        }
+        connectionTimeoutId = undefined;
+      }, 30_000);
+
+      // Reset custom name and hide pairing section (but keep status visible)
       setCustomDeviceName('');
       setShowPairing(false);
-      console.log('[Pairing] Successfully initiated connection to device:', pairingData.device_id, 'as', deviceName);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error during pairing';
       setPairingError(errorMessage);
+      setConnectingStatus(null);
       console.error('[Pairing] Failed:', error);
     }
   };
@@ -515,6 +556,18 @@ const DevicesView: Component = () => {
         </div>
       </Show>
 
+      {/* Connection progress indicator */}
+      <Show when={connectingStatus()}>
+        <div class="devices-connecting" data-testid="connecting-status">
+          <div class="devices-connecting__spinner" />
+          <span class="devices-connecting__text">
+            {connectingStatus() === 'looking-up' && 'Looking up pairing code...'}
+            {connectingStatus() === 'connecting' && 'Connecting to signaling server...'}
+            {connectingStatus() === 'waiting' && 'Waiting for device to respond...'}
+          </span>
+        </div>
+      </Show>
+
       {/* Device list */}
       <div class="devices-content">
         <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
@@ -587,27 +640,30 @@ const App: Component = () => {
     // Clear chunk-reload flag on successful mount
     sessionStorage.removeItem('remoshell-chunk-reload');
 
-    // Check for ?peer= URL parameter → switch to devices view
+    // Parse ?peer= URL parameter early (to clean the URL) but defer setting
+    // the signal until after orchestrator.initialize() to avoid race conditions.
+    let pendingCode: string | null = null;
+
     const params = new URLSearchParams(window.location.search);
     const peerCode = params.get('peer');
     if (peerCode && isShortPairingCode(peerCode)) {
-      const code = peerCode.toUpperCase();
-      setInitialPeerCode(code);
-      setActiveView('devices');
-      sessionStorage.setItem('remoshell-pending-peer', code);
+      pendingCode = peerCode.toUpperCase();
+      sessionStorage.setItem('remoshell-pending-peer', pendingCode);
+      // Clean the URL immediately
       const url = new URL(window.location.href);
       url.searchParams.delete('peer');
       window.history.replaceState({}, '', url.toString());
     }
 
     // Also check sessionStorage for pending peer (chunk-reload recovery)
-    const pendingPeer = sessionStorage.getItem('remoshell-pending-peer');
-    if (pendingPeer && isShortPairingCode(pendingPeer)) {
-      setInitialPeerCode(pendingPeer);
-      setActiveView('devices');
+    if (!pendingCode) {
+      const storedPeer = sessionStorage.getItem('remoshell-pending-peer');
+      if (storedPeer && isShortPairingCode(storedPeer)) {
+        pendingCode = storedPeer;
+      }
     }
 
-    // Initialize app lifecycle and connection orchestrator
+    // Initialize app lifecycle and connection orchestrator BEFORE triggering pairing
     try {
       // Initialize lifecycle management (handles foreground/background)
       await initializeAppLifecycle();
@@ -626,6 +682,13 @@ const App: Component = () => {
         message: 'Failed to initialize the app. Some features may not work correctly.',
         duration: 10000, // 10 seconds - longer since this is important
       });
+    }
+
+    // NOW set the peer code signal — orchestrator is initialized so
+    // DevicesView.onMount -> handlePairingComplete -> orchestrator.connect() is safe.
+    if (pendingCode) {
+      setInitialPeerCode(pendingCode);
+      setActiveView('devices');
     }
 
     // Connection store events

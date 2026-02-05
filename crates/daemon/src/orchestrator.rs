@@ -28,6 +28,7 @@ use crate::network::{
 };
 use crate::router::MessageRouter;
 use crate::session::{SessionManager, SessionManagerImpl};
+use crate::ui::to_base58;
 
 /// Default cleanup interval for sessions (in seconds).
 const SESSION_CLEANUP_INTERVAL_SECS: u64 = 60;
@@ -356,6 +357,15 @@ impl DaemonOrchestrator {
             return;
         };
 
+        // Use base58-encoded device ID as the room ID (matches client's pairing data format)
+        let room_id = to_base58(identity.device_id().as_bytes());
+
+        // Join the room — the connection loop will connect once the room is set
+        if let Err(e) = signaling_client.join_room(&room_id).await {
+            error!("Failed to set signaling room: {}", e);
+        }
+        info!("Signaling room set to: {}", room_id);
+
         loop {
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -367,18 +377,12 @@ impl DaemonOrchestrator {
                         SignalingEvent::StateChanged(state) => {
                             debug!("Signaling state changed: {:?}", state);
                             let _ = event_tx.send(OrchestratorEvent::SignalingStateChanged(state));
-
-                            // Join room when connected
-                            if state == ConnectionState::Connected {
-                                let device_id = identity.device_id().fingerprint();
-                                let room_id = device_id.clone(); // Use device ID as room ID
-                                if let Err(e) = signaling_client.join_room(&device_id, &room_id).await {
-                                    error!("Failed to join signaling room: {}", e);
-                                }
-                            }
                         }
-                        SignalingEvent::OfferReceived { sdp, from_device_id } => {
-                            info!("Received offer from {:?}", from_device_id);
+                        SignalingEvent::RoomJoined { peer_id, existing_peers } => {
+                            info!("Joined room with peer_id={}, existing_peers={:?}", peer_id, existing_peers);
+                        }
+                        SignalingEvent::OfferReceived { sdp, from_peer_id } => {
+                            info!("Received offer from peer {}", from_peer_id);
                             Self::handle_offer(
                                 &signaling_client,
                                 &identity,
@@ -388,45 +392,42 @@ impl DaemonOrchestrator {
                                 &shutdown_token,
                                 &config,
                                 sdp,
-                                from_device_id,
+                                Some(from_peer_id),
                             )
                             .await;
                         }
-                        SignalingEvent::AnswerReceived { sdp, from_device_id } => {
-                            info!("Received answer from {:?}", from_device_id);
-                            Self::handle_answer(&connections, sdp, from_device_id).await;
+                        SignalingEvent::AnswerReceived { sdp, from_peer_id } => {
+                            info!("Received answer from peer {}", from_peer_id);
+                            Self::handle_answer(&connections, sdp, Some(from_peer_id)).await;
                         }
                         SignalingEvent::IceCandidateReceived {
                             candidate,
                             sdp_mid,
                             sdp_mline_index,
-                            from_device_id,
+                            from_peer_id,
                         } => {
-                            debug!("Received ICE candidate from {:?}", from_device_id);
+                            debug!("Received ICE candidate from peer {}", from_peer_id);
                             Self::handle_ice_candidate(
                                 &connections,
                                 candidate,
                                 sdp_mid,
                                 sdp_mline_index,
-                                from_device_id,
+                                Some(from_peer_id),
                             )
                             .await;
                         }
-                        SignalingEvent::PeerJoined { device_id } => {
-                            info!("Peer joined: {}", device_id);
+                        SignalingEvent::PeerJoined { peer_id } => {
+                            info!("Peer joined: {}", peer_id);
                         }
-                        SignalingEvent::PeerLeft { device_id } => {
-                            info!("Peer left: {}", device_id);
+                        SignalingEvent::PeerLeft { peer_id } => {
+                            info!("Peer left: {}", peer_id);
                             let mut conns = connections.write().await;
-                            if conns.remove(&device_id).is_some() {
+                            if conns.remove(&peer_id).is_some() {
                                 let _ = event_tx.send(OrchestratorEvent::PeerDisconnected {
-                                    device_id,
+                                    device_id: peer_id,
                                     reason: "Peer left signaling room".to_string(),
                                 });
                             }
-                        }
-                        SignalingEvent::RoomJoined { room_id } => {
-                            info!("Joined room: {}", room_id);
                         }
                         SignalingEvent::Error { message } => {
                             error!("Signaling error: {}", message);
